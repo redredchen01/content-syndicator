@@ -1,0 +1,25 @@
+{
+  "cookies": [
+    {
+      "name": "_ga",
+      "value": "GA1.1.2114089318.1777430210",
+      "domain": ".instapaper.com",
+      "path": "/",
+      "expires": 1811990209.524133,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga_YY0306L5MG",
+      "value": "GS2.1.s1777430209$o1$g0$t1777430211$j58$l0$h0",
+      "domain": ".instapaper.com",
+      "path": "/",
+      "expires": 1811990211.787977,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}

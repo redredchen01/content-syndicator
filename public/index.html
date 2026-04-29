@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>內容多渠道發佈</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+<div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+  <!-- 简化后的顶部导航 -->
+  <div class="flex justify-between items-center mb-6">
+    <h1 class="text-2xl font-semibold text-gray-800">內容發佈面板</h1>
+    <div class="flex space-x-4">
+      <button id="navPublish" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">发布</button>
+      <button id="navHistory" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">历史</button>
+      <button id="navSettings" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">设置</button>
+    </div>
+  </div>
+
+  <!-- 发布视图 -->
+  <div id="viewPublish" class="hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div class="hidden lg:block flex justify-between items-start mb-2">
+        <span class="font-semibold text-blue-900">内容来源</span>
+        <select id="sourceType" class="border rounded p-2 w-full">
+          <option value="url">链接</option>
+          <option value="manual">手动输入</option>
+        </select>
+      </div>
+
+      <!-- 文章标题 -->
+      <div class="space-y-2">
+        <label class="block font-medium text-gray-700">标题</label>
+        <input type="text" id="titleInput" class="border rounded p-2 w-full" />
+      </div>
+
+      <!-- Tags & 摘要 -->
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block font-medium text-gray-700">标签 (最多 4)</label>
+          <input type="text" id="tagsInput" class="border rounded p-2 w-full" placeholder="ai,tech,news" />
+        </div>
+        <div>
+          <label class="block font-medium text-gray-700">SEO 摘要</label>
+          <input type="text" id="excerptInput" class="border rounded p-2 w-full" placeholder="简短的 1-2 句描述" />
+        </div>
+      </div>
+
+      <!-- 内容输入 -->
+      <div class="mt-4 space-y-2">
+        <label class="block font-medium text-gray-700">正文编辑区</label>
+        <textarea id="contentInput" class="border rounded p-2 w-full h-[200px] focus:ring-2 focus:ring-blue-500" oninput="updatePreview()"></textarea>
+      </div>
+
+      <!-- 预览 -->
+      <div class="hidden lg:block mt-4">
+        <label class="block font-medium text-gray-700">实时预览</label>
+        <div id="markdownPreview" class="border rounded p-2 bg-gray-50 h-[200px] overflow-y-auto"></div>
+      </div>
+    </div>
+
+    <!-- 发布目标平台选择 -->
+    <div class="mt-6 flex flex-wrap gap-2">
+      <span class="text-sm text-gray-600">目标平台：</span>
+      <div id="platformCheckboxes" class="flex flex-wrap gap-2">
+        <!-- 动态加载平台列表 -->
+      </div>
+      <div class="mt-2 flex items-center">
+        <label class="flex items-center space-x-2">
+          <input type="radio" name="publishStatus" value="draft" checked class="text-blue-600 focus:ring-blue-500" />
+          <span class="text-sm text-gray-700">保存为草稿</span>
+        </label>
+        <label class="flex items-center space-x-2">
+          <input type="radio" name="publishStatus" value="public" class="text-blue-600 focus:ring-blue-500" />
+          <span class="text-sm text-gray-700">公开发布</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 行动按钮 -->
+    <div class="mt-6 flex space-x-3">
+      <button id="generateBtn" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 flex items-center justify-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.26-1.972L9 17.59V5a2 2 0 012-2h3.18L2 5c1.743 0 3.413.5 4.5 1.36V4a1 1 0 011-1h1a1 1 0 011 1v1c0 .552.448 1 .998 1h4.02c1.087 0 2 .5 2 1v1c0 .276.26.5.875.5L17 11.9v6a1 1 0 01-1 1h-1a1 1 0 01-1-1v-5c0-.276-.26-.5-.7-.5z" />
+        </svg>
+        生成内容
+      </button>
+      <button id="autoPublishBtn" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 flex items-center justify-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v2m0 8v2m9-9h-2M6 12h-2m14 0h-2M6 18h-2m14 0h-2M12 3v2m0 16v2m-9-8h2M6 12h2" />
+        </svg>
+        自动发布
+      </button>
+      <button id="addPromptBtn" class="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700 flex items-center justify-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 1.5A1.5 1.5 0 0110.5 10.5a1.5 1.5 0 010 3 1.5 1.5 0 01-3 0c0-.605.395-1.2 1-1.2s1 .595 1 1.2A1.5 1.5 0 019 13.5c0-.447-.112-.875-.293-1.272l3-2.64a1 1 0 010-1.41l-3-2.64c-.182-.5-.5-.5-1.1 0l-3 2.64c-.182.5-.368.95-.368 1.41 0 .425.112.853.368 1.272l3 2.64zm0 0l3 2.64M12 15a3 3 0 100-6 3 3 0 000 6z" />
+        </svg>
+        自定义提示词
+      </button>
+    </div>
+  </div>
+
+  <!-- 历史视图 -->
+  <div id="viewHistory" class="hidden mt-6">
+    <p class="text-gray-500 mb-4 italic">加载历史...</p>
+    <div id="historyContainer" class="space-y-4"></div>
+  </div>
+
+  <!-- 设置视图 -->
+  <div id="viewSettings" class="hidden mt-6">
+    <p class="text-gray-500 mb-4">加载设置...</p>
+    <div id="settingsContainer"></div>
+  </div>
+
+  <!-- 提示词编辑视图 -->
+  <div id="viewPrompts" class="hidden mt-6">
+    <h2 class="text-lg font-semibold mb-2">自定义提示词</h2>
+    <textarea id="mainPromptInput" class="border rounded p-2 w-full h-[150px]"></textarea>
+    <textarea id="promoPromptInput" class="border rounded p-2 w-full h-[150px]"></textarea>
+    <button class="bg-blue-600 text-white px-4 py-2 rounded mt-2">保存</button>
+  </div>
+
+  <!-- 尾部 -->
+  <div class="mt-8 text-center text-sm text-gray-500 border-t pt-6">
+    © 2026 內容多渠道发布系统
+  </div>
+</div>
+
+<script>
+  // 简化的导航切换逻辑
+  const tabs = [
+    { id: 'navPublish', view: 'viewPublish' },
+    { id: 'navHistory', view: 'viewHistory' },
+    { id: 'navSettings', view: 'viewSettings' },
+    { id: 'navPrompts', view: 'viewPrompts' }
+  ];
+
+  function setActive(tabIdx) {
+    document.querySelectorAll('[id^=nav]').forEach(t => t.classList.remove('text-blue-600', 'border-blue-600'));
+    document.querySelectorAll('[id^=view]').forEach(v => v.classList.add('hidden'));
+    tabs[tabIdx].el.classList.add('text-blue-600', 'border-blue-600');
+    document.getElementById(tabs[tabIdx].view).classList.remove('hidden');
+  }
+
+  document.querySelectorAll('[id^=nav]').forEach((el, i) => {
+    el.addEventListener('click', () => setActive(i));
+  });
+  setActive(0); // 默认文章发布
+
+  // 动态加载平台复选框
+  async function loadPlatforms() {
+    const res = await fetch('/api/platforms');
+    const data = await res.json();
+    const container = document.getElementById('platformCheckboxes');
+    container.innerHTML = data.platforms.map(p => {
+      const checked = (data.defaults || []).includes(p.name) ? 'checked' : '';
+      return `
+        <label class="flex items-center gap-2">
+          <input type="checkbox" name="platforms" value="${p.name}" ${checked} class="mt-1 rounded text-blue-600 focus:ring-blue-500" />
+          <span class="font-semibold text-blue-800">${p.name}</span>
+        </label>`;
+    }).join('');
+  }
+  loadPlatforms();
+
+  // 实时预览
+  function updatePreview() {
+    const content = document.getElementById('contentInput').value || '';
+    const html = marked.parse(content);
+    document.getElementById('markdownPreview').innerHTML = html;
+  }
+  updatePreview();
+
+  // 表单保存
+  document.getElementById('generateBtn').addEventListener('click', async () => {
+    const title = document.getElementById('titleInput').value.trim();
+    const content = document.getElementById('contentInput').value.trim();
+    if(!title||!content) return alert('请填写标题和正文');
+    // 这里可以调用后端接口生成
+    alert('内容生成逻辑待接入后端 API');
+  });
+
+  // 自动发布
+  document.getElementById('autoPublishBtn').addEventListener('click', async () => {
+    const platforms = Array.from(document.querySelectorAll('#platformCheckboxes input[name="platforms"]:checked')).map(cb=>cb.value);
+    if(platforms.length===0) return alert('请选择至少一个平台');
+    const status = document.querySelector('input[name="publishStatus"]:checked').value;
+    alert(`即将向 ${platforms.join(',')} 发布（${status}）`);
+  });
+
+  // 表单自动更新选中状态
+  window.addEventListener('load', () => {
+    document.getElementById('titleInput').addEventListener('input', updatePreview);
+    document.getElementById('contentInput').addEventListener('input', updatePreview);
+    document.getElementById('tagsInput').addEventListener('input', updatePreview);
+    document.getElementById('excerptInput').addEventListener('input', updatePreview);
+  });
+</script>
+</body>
+</html>

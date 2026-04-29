@@ -1,0 +1,254 @@
+{
+  "cookies": [
+    {
+      "name": "ab_experiment_sampled",
+      "value": "%22false%22",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1808899979.767195,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ab_testing_id",
+      "value": "%22a8fc96dc-9adf-4c21-82d1-24a6f163bf6d%22",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1808900046.763942,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "cookie_storage_key",
+      "value": "69798f42-4f5a-45a1-866a-09f4f56c8cce",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1785139979.768092,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "ajs_anonymous_id",
+      "value": "%22b3e8490c-0973-4b57-a486-77b402bc2321%22",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1808900046.763853,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "visit_id",
+      "value": "%7B%22id%22%3A%2213af78b5-a0e2-4bc6-b6a7-67294cbf459d%22%2C%22timestamp%22%3A%222026-04-28T08%3A12%3A59.622Z%22%7D",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1777365846.763908,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "substack.lli",
+      "value": "0",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1785139979.76812,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "cf_clearance",
+      "value": "YGOm0CPDoVtEMoimJ4tuzr5SckIBkJjpO3Oq0HKEDX4-1777363981-1.2.1.1-Ginq7gH7ZIdilUypUTk0eY4hP.M2Yg0t466zkSSejm7MmrQoGkNbOoT1iHheZZXcHJhg96x3WPt0c9M0DYrlP2UkQMKaHVlTyGbI7yn23fpU3J4imhBmb0TyXAMDCaTzjxD18l0lF2swBcDEwzcPA1VQgFn00ppDJTVyjGuWR07GFmFTJvItmnZceRRRgGQWYwn98cPWsOy2p9OskFN3Kj0sb7Md57G5BGXNpR9wht2sVyeKJ3Zr6y9MmTLkn.IdqavVTFuqAT3gAEWs2XVr3C9atyRnWY6j8EfyacUR4UA2.bXldRGOw2FyzKBG7h8vuwT9CL5n0bVxfWEt.dJA_w",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1808899981.64423,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None",
+      "partitionKey": "https://substack.com",
+      "_crHasCrossSiteAncestor": false
+    },
+    {
+      "name": "__cf_bm",
+      "value": "YOxVzkoFt5oHx0.Ea2.xOoykdmmyK_FWMnEoChF69Xo-1777363981.6314845-1.0.1.1-tMy8eYkw1PKZtTmvDT10JSSHLIB3yz5HVCn7hPweCWL2dupcaCuG2hdTrkOjkj.3_1igcHndt8PwTYqPa2WM1McjuYcc5bEGu_acIrbk3Hn6HqWb3ux0mjZImx_zPBLh",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1777365781.644604,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga",
+      "value": "GA1.1.835378978.1777363982",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1811923983.198289,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gcl_au",
+      "value": "1.1.1433781407.1777363982",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1785139982,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "IDE",
+      "value": "AHWqTUlY6BNl3MvUfwBfppWybfxpKU56ZiT4FDyWLeaN0CCI89-TdLe8EaNHMHuU",
+      "domain": ".doubleclick.net",
+      "path": "/",
+      "expires": 1811923983.325098,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "substack.sid",
+      "value": "s%3AVacx9TUslkQzt1i74yiYLefWaJy41Fil.lj9%2BpQG4s2YGgioCbkv5cRUAmOt4g61dmJc7mZ47P5I",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1785140046.763969,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Secure-STRP",
+      "value": "AEEP7gLJ7xcXxE5Ykb1lkDlDnUK-BAwV3-iFgX1FzuwKLxenQzIBJOA0dxJN0aV8aXLI3nExtu6RMpIb-2YjyP1gVfkaTkSJgsHW",
+      "domain": ".google.com",
+      "path": "/",
+      "expires": 1777364296.765431,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "AEC",
+      "value": "AaJma5s89voyTwD-h4WOrTWI6s41SQDL0r82OoMNz7laeuuE56cjfmAMbIw",
+      "domain": ".google.com",
+      "path": "/",
+      "expires": 1792915996.765657,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Secure-BUCKET",
+      "value": "CJME",
+      "domain": ".google.com",
+      "path": "/",
+      "expires": 1792915996.765689,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "NID",
+      "value": "531=CliSAir3wKpmhFQ-kQtGA5RrHM0GvIyIZ5qkC8KlI16eHenCrSsSf2gOBP4_fQEW3Z600IY5b1oeTziSS_Fhpaee2XK_SSznnuRYFUd6Au2b93cgABSt8B0_Jr8OSrviwxY22Ytw0is3ZZx8BnfZrUhJUcge6_JvXNmdN2JpxBFrKUFaxMTzAqJTM0IJCLzzKziatxAgSZCfsPz-GbEIM7xlTNZiHwAmcLzb4swCSWmU8V6eJ5Z3_VGmnY0NsjX9",
+      "domain": ".google.com",
+      "path": "/",
+      "expires": 1793175196.958138,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "AWSALBTG",
+      "value": "kjv5evF16fXPeI3nme/RodxQtcNyjCqoOSvvX5+NVKAlJK21HAlqnPXjI8oFAzd36MwxJRCyYPJ62Ult1VUw508amb1d6L98UpXCX+MVFd52XCuvUZ0GQQ2S4/nK0XZ5Wgp1oTuT6hHgL7xiCYaTPZWKF7kv3wxuwnZ9J/qmJjKOUmGCG/R3fKc3ud420uWPcS1njmJtBUli5mo0iCGQaZqfylfkeEc9ngmW+RUExkr2xDneZuTu7xu38jpDAWtX",
+      "domain": "substack.com",
+      "path": "/",
+      "expires": 1777968846.763541,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "AWSALBTGCORS",
+      "value": "kjv5evF16fXPeI3nme/RodxQtcNyjCqoOSvvX5+NVKAlJK21HAlqnPXjI8oFAzd36MwxJRCyYPJ62Ult1VUw508amb1d6L98UpXCX+MVFd52XCuvUZ0GQQ2S4/nK0XZ5Wgp1oTuT6hHgL7xiCYaTPZWKF7kv3wxuwnZ9J/qmJjKOUmGCG/R3fKc3ud420uWPcS1njmJtBUli5mo0iCGQaZqfylfkeEc9ngmW+RUExkr2xDneZuTu7xu38jpDAWtX",
+      "domain": "substack.com",
+      "path": "/",
+      "expires": 1777968846.763763,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_dd_s",
+      "value": "rum=0&expire=1777364943039",
+      "domain": "substack.com",
+      "path": "/",
+      "expires": 1777364948,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "_ga_TLW0DF6G5V",
+      "value": "GS2.1.s1777363981$o1$g1$t1777364048$j60$l0$h0",
+      "domain": ".substack.com",
+      "path": "/",
+      "expires": 1811924048.803931,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://substack.com",
+      "localStorage": [
+        {
+          "name": "session_attribution",
+          "value": "{\"sessionStart\":1777363980169,\"originalReferrer\":\"\",\"landingPage\":\"https://substack.com/publish/post\",\"visits\":[{\"href\":\"https://substack.com/publish/post\",\"referrer\":\"\",\"timestamp\":1777363980169}]}"
+        },
+        {
+          "name": "substack_ref",
+          "value": "\"\""
+        },
+        {
+          "name": "_gcl_ls",
+          "value": "{\"schema\":\"gcl\",\"version\":1,\"gcl_ctr\":{\"value\":{\"value\":0,\"timeouts\":0,\"errors\":0,\"eopCount\":0,\"creationTimeMs\":1777363981806},\"expires\":1785139981806}}"
+        },
+        {
+          "name": "substack_ref_url",
+          "value": "\"https://substack.com/publish/post\""
+        }
+      ]
+    },
+    {
+      "origin": "https://www.google.com",
+      "localStorage": [
+        {
+          "name": "sb_wiz.zpc.gws-wiz-serp.",
+          "value": "{\"0\":[],\"1\":{\"av\":\"7966448326404672687\",\"k\":1}}"
+        },
+        {
+          "name": "sb_wiz.sr_di",
+          "value": "GJ-y6vibp6DphQEYorX7_ralqKgXGPf7wqnvoJLjKhiB356T94uAhdsBGM3xvOXKxo79BA"
+        },
+        {
+          "name": "sb_wiz.pq_tm_hp",
+          "value": "1777363997382"
+        },
+        {
+          "name": "sb_wiz.sc_pq",
+          "value": ""
+        },
+        {
+          "name": "sb_wiz.pq",
+          "value": "mail"
+        }
+      ]
+    }
+  ]
+}
