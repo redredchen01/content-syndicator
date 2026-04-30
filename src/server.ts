@@ -13,6 +13,7 @@ import { appendToSheet } from './sheets';
 import { db, savePost, getPostsHistory } from './db';
 import { logger, randomSleep } from './utils/logger';
 import { getProfile, saveProfile, isReadyForDispatch } from './services/brand-profile';
+import { runPrecheck } from './services/anchor-monitor';
 
 export const app = express();
 app.use(cors());
@@ -557,6 +558,31 @@ app.put('/api/v2/brand-profile', (req, res) => {
     });
   } catch (error: any) {
     logger.error('PUT /api/v2/brand-profile error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Precheck before generation — R10b anchor concentration + R10c URL cap.
+ * Body: { target_urls: string[] }
+ * Returns: PrecheckResult (see anchor-monitor.ts)
+ */
+app.post('/api/v2/precheck', (req, res) => {
+  try {
+    const profile = getProfile(db);
+    if (!profile) {
+      return res.status(412).json({
+        error: '品牌资料库未配置，请先访问 /admin.html 填写。',
+      });
+    }
+    const { target_urls } = req.body ?? {};
+    const urls: string[] = Array.isArray(target_urls)
+      ? target_urls.filter((u: unknown) => typeof u === 'string')
+      : [];
+    const result = runPrecheck(db, urls, profile);
+    res.json(result);
+  } catch (error: any) {
+    logger.error('POST /api/v2/precheck error', error);
     res.status(500).json({ error: error.message });
   }
 });
