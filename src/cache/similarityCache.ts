@@ -1,6 +1,17 @@
 import { ScrapedData } from '../scraper';
 import crypto from 'crypto';
 
+/**
+ * @deprecated v0.1 only — replaced by `src/services/lint/jaccard.ts` in v0.2.
+ *
+ * This module hashes the first 2000 characters with sha256 to detect
+ * "similar" generations, but it cannot tell whether two articles are
+ * semantically near-duplicates. v0.2 uses 5-gram character-shingle
+ * Jaccard similarity for batch-level dedup (Plan Unit 7, R23).
+ *
+ * Kept in tree only for back-compat with v0.1 paths still referencing
+ * ContentCache. Remove this file once those paths migrate (Phase 2).
+ */
 export class ContentCache {
   private cache: Map<string, string> = new Map();
 
