@@ -1,6 +1,7 @@
 import { ErrorType } from './smartRetry';
 import { logger } from './logger';
 import { systemMonitor } from './systemMonitor';
+import { hasMessage } from '../types';
 
 interface ErrorAdvice {
   type: ErrorType;
@@ -147,7 +148,7 @@ class ErrorHandler {
     // Log to system monitor
     systemMonitor.recordOperation(`error.${errorType}`, 0, false, {
       context,
-      message: (hasMessage(error) ? error.message.substring(0, 100) : 'Unknown error',
+      message: hasMessage(error) ? error.message.substring(0, 100) : 'Unknown error',
     });
 
     const errorMessage = hasMessage(error) ? error.message : String(error);

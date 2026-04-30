@@ -33,7 +33,7 @@ class ConfigValidator {
     // LLM Config
     { name: 'OpenAI API Key', key: 'OPENAI_API_KEY', required: false, type: 'string', format: 'api_key' },
     { name: 'Gemini API Key', key: 'GEMINI_API_KEY', required: false, type: 'string', format: 'api_key' },
-    { name: 'Selected Model', key: 'SLECTED_MODEL', required: false, type: 'string', defaultValue: 'gpt-4o-mini' },
+    { name: 'Selected Model', key: 'SELECTED_MODEL', required: false, type: 'string', defaultValue: 'gpt-4o-mini' },
 
     // Platform Config
     { name: 'Dev.to API Key', key: 'DEVTO_API_KEY', required: false, type: 'string', format: 'api_key' },
@@ -232,7 +232,7 @@ class ConfigValidator {
 
     // Group by category
     const categories = {
-      'LLM': ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'SLECTED_MODEL'],
+      'LLM': ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'SELECTED_MODEL'],
       'Platforms': ['DEVTO_API_KEY', 'MEDIUM_INTEGRATION_TOKEN', 'GITHUB_TOKEN', 'HASHNODE_TOKEN', 'HASHNODE_PUBLICATION_ID', 'BLOGGER_BLOG_ID', 'WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD'],
       'Google Sheets': ['GOOGLE_APPLICATION_CREDENTIALS_JSON', 'GOOGLE_SHEET_ID'],
       'Browser': ['ENABLE_BROWSER_AUTOMATION', 'BROWSER_AUTH_MODE', 'BROWSER_HEADLESS'],
@@ -289,7 +289,7 @@ class ConfigValidator {
     ];
 
     const categories = {
-      'LLM Configuration': ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'SLECTED_MODEL'],
+      'LLM Configuration': ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'SELECTED_MODEL'],
       'Platform API Keys': ['DEVTO_API_KEY', 'MEDIUM_INTEGRATION_TOKEN', 'GITHUB_TOKEN', 'HASHNODE_TOKEN', 'HASHNODE_PUBLICATION_ID', 'BLOGGER_BLOG_ID'],
       'WordPress': ['WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD'],
       'Google Sheets Integration': ['GOOGLE_APPLICATION_CREDENTIALS_JSON', 'GOOGLE_SHEET_ID'],
