@@ -41,6 +41,34 @@ export function savePost(originalUrl: string, title: string, content: string, re
   }
 }
 
+// ... existing code ...
+export function updateTaskProgress(taskId: string, platform: string, status: string, error?: string): void {
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO task_progress (task_id, platform, status, last_error, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(task_id, platform) DO UPDATE SET
+        status = excluded.status,
+        last_error = excluded.last_error,
+        updated_at = excluded.updated_at
+    `);
+    stmt.run(taskId, platform, status, error || null);
+  } catch (error) {
+    logger.error('Failed to update task progress', error);
+  }
+}
+
+export function getTaskProgress(taskId: string): Array<{ platform: string; status: string; last_error: string | null }> {
+  try {
+    const stmt = db.prepare('SELECT platform, status, last_error FROM task_progress WHERE task_id = ?');
+    const rows = stmt.all(taskId) as Array<{ platform: string; status: string; last_error: string | null }>;
+    return rows;
+  } catch (error) {
+    logger.error('Failed to get task progress', error);
+    return [];
+  }
+}
+
 export function getPostsHistory(): SavedPost[] {
   try {
     const stmt = db.prepare('SELECT * FROM posts ORDER BY timestamp DESC LIMIT 100');
@@ -50,3 +78,4 @@ export function getPostsHistory(): SavedPost[] {
     return [];
   }
 }
+// ... existing code ...

@@ -89,28 +89,28 @@ export function buildAuthConfig(): Record<string, any> {
   // 2️⃣ Merge platform‑specific cookies (simple overwrite)
   const platformCookies = loadPlatformSpec().cookies ?? [];
   if (Array.isArray(platformCookies)) {
-    merged.cookies = merged.cookies.map(c => {
-      const override = platformCookies.find(p => p.name === c.name);
-      return override ? { ...c, ...override } : c;
+    merged.cookies = merged.cookies.map((item: Record<string, any>) => {
+      const override = platformCookies.find((cookie: Record<string, any>) => cookie.name === item.name);
+      return override ? { ...item, ...override } : item;
     });
   }
 
   // 3️⃣ Merge platform‑specific origins
   const platformOrigins = loadPlatformSpec().origins ?? [];
   if (Array.isArray(platformOrigins)) {
-    merged.origins = merged.origins.map(o => {
-      const found = platformOrigins.find(p => p.origin === o.origin);
-      return found ? { ...o, ...found } : o;
+    merged.origins = merged.origins.map((item: Record<string, any>) => {
+      const found = platformOrigins.find((origin: Record<string, any>) => origin.origin === item.origin);
+      return found ? { ...item, ...found } : item;
     });
   }
 
   // 4️⃣ Resolve placeholder tokens
   const domainPlaceholder = (loadPlatformSpec().domainPlaceholder as string) || 'example.com';
-  merged.cookies.forEach(c => {
-    if (c.domain === '.{{DOMAIN}}') c.domain = `.${domainPlaceholder}`;
+  merged.cookies.forEach((item: Record<string, any>) => {
+    if (item.domain === '.{{DOMAIN}}') item.domain = `.${domainPlaceholder}`;
   });
-  merged.origins.forEach(o => {
-    if (o.origin === '{{ORIGIN}}') o.origin = `https://${domainPlaceholder}`;
+  merged.origins.forEach((item: Record<string, any>) => {
+    if (item.origin === '{{ORIGIN}}') item.origin = `https://${domainPlaceholder}`;
   });
 
   // 5️⃣ Write the merged config back to `.auth/merged.json` for browser storage

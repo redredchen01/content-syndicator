@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  syndicator:
+    build: .
+    container_name: content-syndicator
+    ports:
+      - "3000:3000"
+    environment:
+      - BROWSER_HEADLESS=true
+      - ENABLE_BROWSER_AUTOMATION=true
+      - NODE_ENV=production
+    volumes:
+      - ./.data:/app/.data
+      - ./.auth:/app/.auth
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+.auth/
+
+# Local data (SQLite + transient files)
+.data/syndicator.db-shm
+.data/syndicator.db-wal
+.data/uploads/
+.data/temp_*.html
+.data/agent-memory.json
+.data/performance-metrics.json
+.data/scrape-cache/
+
+# Server logs
+server.out
+server.nohup.log
+server.log
+server2.out
+server*.log
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Build output
+*.tsbuildinfo
+
+# Snapshot artifacts
+.data/schema-snapshot.sql
