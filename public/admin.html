@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>品牌资料库 — 第三方口吻外链分发工具 v0.2</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .field-error { color: #b91c1c; font-size: 0.875rem; margin-top: 0.25rem; }
+    textarea { font-family: "JetBrains Mono", "Menlo", monospace; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<div class="max-w-3xl mx-auto px-6 py-8">
+  <header class="mb-8">
+    <h1 class="text-2xl font-semibold mb-1">品牌资料库</h1>
+    <p class="text-slate-500 text-sm">单租户单主站。本页改动立即生效，无需重启服务。</p>
+  </header>
+
+  <div id="status-banner" class="hidden mb-6 px-4 py-3 rounded-lg text-sm"></div>
+
+  <form id="brand-form" class="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+
+    <!-- Required fields -->
+    <fieldset class="space-y-4">
+      <legend class="text-base font-semibold text-slate-700">必填字段（R3 前置闸）</legend>
+
+      <div>
+        <label class="block text-sm font-medium mb-1" for="name">品牌主名 *</label>
+        <input id="name" name="name" type="text" required
+               class="w-full border border-slate-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-300" />
+        <div class="field-error" data-error-for="name"></div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">默认目标页清单 *（每行一个，格式 <code>https://url 标签</code>）</label>
+        <textarea id="target_urls" name="target_urls" rows="4"
+                  placeholder="https://example.com home&#10;https://example.com/product product:main&#10;https://example.com/campaign campaign:summer"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+        <p class="text-xs text-slate-500 mt-1">每行 <code>URL 空格 标签</code>，标签是 LLM 选页的语境提示（如 home、product:xyz）</p>
+        <div class="field-error" data-error-for="target_urls"></div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">身份暴露禁用词列表 *（每行一条，至少 5 条）</label>
+        <textarea id="exposure_blocklist" name="exposure_blocklist" rows="6"
+                  placeholder="作为我们&#10;本品牌&#10;我们的产品&#10;敝公司&#10;官方推荐"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+        <p class="text-xs text-slate-500 mt-1">命中即阻断单变体发布。CJK 用子串匹配，Latin 用 \b 词边界。</p>
+        <div class="field-error" data-error-for="exposure_blocklist"></div>
+      </div>
+    </fieldset>
+
+    <!-- Optional fields -->
+    <fieldset class="space-y-4 pt-4 border-t border-slate-200">
+      <legend class="text-base font-semibold text-slate-700">可选字段</legend>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">品牌名变体（每行一个）</label>
+        <textarea id="name_variants" name="name_variants" rows="3"
+                  placeholder="Acme&#10;acme.io&#10;艾克米"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">禁用锚词列表（每行一条）</label>
+        <textarea id="anchor_blocklist" name="anchor_blocklist" rows="3"
+                  placeholder="click here&#10;this site"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">必带尾巴（可选，每篇结尾追加）</label>
+        <textarea id="signature" name="signature" rows="2"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+      </div>
+
+      <!-- Thresholds -->
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">锚词集中度阈值</label>
+          <input id="anchor_concentration_threshold" type="number" min="0" max="1" step="0.05" value="0.3"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+          <p class="text-xs text-slate-500 mt-1">默认 0.30</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">单 URL 周上限</label>
+          <input id="weekly_url_cap" type="number" min="1" step="1" value="6"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+          <p class="text-xs text-slate-500 mt-1">默认 6</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Jaccard 阈值</label>
+          <input id="jaccard_threshold" type="number" min="0" max="1" step="0.05" value="0.5"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+          <p class="text-xs text-slate-500 mt-1">默认 0.5</p>
+        </div>
+      </div>
+
+      <!-- Digest channel -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">日终 digest 渠道</label>
+          <select id="digest_channel" class="w-full border border-slate-300 rounded-md px-3 py-2">
+            <option value="none">不发送</option>
+            <option value="email">邮件</option>
+            <option value="telegram">Telegram</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">digest 收件人 / chat_id</label>
+          <input id="digest_destination" type="text" placeholder="email@example.com 或 -100123456789"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="flex items-center justify-between pt-4 border-t border-slate-200">
+      <button type="button" id="reset-btn" class="text-sm text-slate-500 hover:text-slate-800">重新加载</button>
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md font-medium">
+        保存
+      </button>
+    </div>
+  </form>
+
+  <div id="dispatch-status" class="mt-6 px-4 py-3 rounded-lg text-sm hidden"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  function showStatus(message, kind /* 'ok' | 'error' */) {
+    const el = $('status-banner');
+    el.className = `mb-6 px-4 py-3 rounded-lg text-sm ${
+      kind === 'ok' ? 'bg-green-50 border border-green-200 text-green-800' :
+                       'bg-red-50 border border-red-200 text-red-800'
+    }`;
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  function clearFieldErrors() {
+    document.querySelectorAll('[data-error-for]').forEach(e => (e.textContent = ''));
+  }
+
+  function showFieldErrors(errors) {
+    clearFieldErrors();
+    for (const err of errors) {
+      const baseField = err.field.split(/[.\[]/)[0];
+      const el = document.querySelector(`[data-error-for="${baseField}"]`);
+      if (el) el.textContent += (el.textContent ? ' / ' : '') + err.message;
+    }
+  }
+
+  function showDispatchStatus(ready, report) {
+    const el = $('dispatch-status');
+    if (ready) {
+      el.className = 'mt-6 px-4 py-3 rounded-lg text-sm bg-green-50 border border-green-200 text-green-800';
+      el.textContent = '✓ 资料库满足前置闸，发布可以开始。';
+    } else {
+      el.className = 'mt-6 px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800';
+      el.innerHTML = '⚠ 当前资料库尚未满足发布前置闸：<ul class="list-disc ml-5 mt-1">' +
+        report.errors.map(e => `<li>${e.message}</li>`).join('') + '</ul>';
+    }
+    el.classList.remove('hidden');
+  }
+
+  function parseTargetUrls(textarea) {
+    return textarea.split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        const idx = line.indexOf(' ');
+        if (idx === -1) return { url: line, context_tag: '' };
+        return { url: line.slice(0, idx), context_tag: line.slice(idx + 1).trim() };
+      });
+  }
+
+  function parseLineList(textarea) {
+    return textarea.split('\n').map(s => s.trim()).filter(Boolean);
+  }
+
+  function joinTargetUrls(arr) {
+    return (arr || []).map(t => t.url + (t.context_tag ? ' ' + t.context_tag : '')).join('\n');
+  }
+
+  function joinList(arr) {
+    return (arr || []).join('\n');
+  }
+
+  async function load() {
+    clearFieldErrors();
+    try {
+      const res = await fetch('/api/v2/brand-profile');
+      const data = await res.json();
+      const p = data.profile;
+      if (!p) {
+        showStatus('暂无资料 — 填写下方表单后保存。', 'ok');
+        showDispatchStatus(data.dispatchReady, data.dispatchReport);
+        return;
+      }
+      $('name').value = p.name;
+      $('target_urls').value = joinTargetUrls(p.target_urls);
+      $('exposure_blocklist').value = joinList(p.exposure_blocklist);
+      $('name_variants').value = joinList(p.name_variants);
+      $('anchor_blocklist').value = joinList(p.anchor_blocklist);
+      $('signature').value = p.signature || '';
+      $('anchor_concentration_threshold').value = p.anchor_concentration_threshold;
+      $('weekly_url_cap').value = p.weekly_url_cap;
+      $('jaccard_threshold').value = p.jaccard_threshold;
+      $('digest_channel').value = p.digest_channel;
+      $('digest_destination').value = p.digest_destination || '';
+      showStatus('已加载 brand_id=main 的资料。', 'ok');
+      showDispatchStatus(data.dispatchReady, data.dispatchReport);
+    } catch (err) {
+      showStatus('加载失败：' + err.message, 'error');
+    }
+  }
+
+  $('brand-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearFieldErrors();
+    const payload = {
+      name: $('name').value.trim(),
+      target_urls: parseTargetUrls($('target_urls').value),
+      exposure_blocklist: parseLineList($('exposure_blocklist').value),
+      name_variants: parseLineList($('name_variants').value),
+      anchor_blocklist: parseLineList($('anchor_blocklist').value),
+      signature: $('signature').value.trim() || null,
+      anchor_concentration_threshold: parseFloat($('anchor_concentration_threshold').value),
+      weekly_url_cap: parseInt($('weekly_url_cap').value, 10),
+      jaccard_threshold: parseFloat($('jaccard_threshold').value),
+      digest_channel: $('digest_channel').value,
+      digest_destination: $('digest_destination').value.trim() || null,
+    };
+    try {
+      const res = await fetch('/api/v2/brand-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.status === 422) {
+        showStatus('保存失败 — 请修正字段错误。', 'error');
+        showFieldErrors(data.errors || []);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      showStatus('已保存。下次发布会读取最新设置。', 'ok');
+      showDispatchStatus(data.dispatchReady, data.dispatchReport);
+    } catch (err) {
+      showStatus('保存失败：' + err.message, 'error');
+    }
+  });
+
+  $('reset-btn').addEventListener('click', load);
+  load();
+</script>
+</body>
+</html>

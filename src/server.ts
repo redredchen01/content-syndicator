@@ -10,8 +10,9 @@ import { generateMarkdown, generatePromoMarkdown, getRawPrompts, saveRawPrompts 
 import { PlatformAdapter } from './adapters/base';
 import { allAdapters } from './adapters/index';
 import { appendToSheet } from './sheets';
-import { savePost, getPostsHistory } from './db';
+import { db, savePost, getPostsHistory } from './db';
 import { logger, randomSleep } from './utils/logger';
+import { getProfile, saveProfile, isReadyForDispatch } from './services/brand-profile';
 
 export const app = express();
 app.use(cors());
@@ -515,6 +516,48 @@ app.post('/api/auth/test', async (req, res) => {
       ? ' If you selected common Chrome profile mode, close all Chrome windows first or switch to Installed Chrome, separate profile.'
       : '';
     if (!res.headersSent) res.status(500).json({ error: `${message}${profileHint}` });
+  }
+});
+
+// =============================================================================
+// v0.2 routes — third-party-voice syndicator (Plan Unit 3 onward)
+// =============================================================================
+
+app.get('/api/v2/brand-profile', (req, res) => {
+  try {
+    const profile = getProfile(db);
+    const dispatch = isReadyForDispatch(db);
+    res.json({ profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
+  } catch (error: any) {
+    logger.error('GET /api/v2/brand-profile error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/v2/brand-profile', (req, res) => {
+  try {
+    const body = req.body ?? {};
+    if (typeof body !== 'object' || body === null) {
+      return res.status(400).json({ error: 'JSON body required' });
+    }
+    if (typeof body.name !== 'string' || body.name.trim().length === 0) {
+      return res.status(422).json({
+        errors: [{ field: 'name', message: '品牌主名不能为空' }],
+      });
+    }
+    const result = saveProfile(db, body);
+    if (!result.ok) {
+      return res.status(422).json({ errors: result.errors });
+    }
+    const dispatch = isReadyForDispatch(db);
+    res.json({
+      profile: result.profile,
+      dispatchReady: dispatch.ready,
+      dispatchReport: dispatch.report,
+    });
+  } catch (error: any) {
+    logger.error('PUT /api/v2/brand-profile error', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
