@@ -123,11 +123,17 @@ export interface PublishResults {
 
 // ==================== 适配器 ====================
 
+export interface TestConnectionResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface PlatformAdapter {
   name: string;
   isBrowserAutomation?: boolean;
   canPublishAutomatically?: boolean;
   publish(options: PublishOptions): Promise<PublishResult>;
+  testConnection?(): Promise<TestConnectionResult>;
 }
 
 // ==================== 数据库 ====================

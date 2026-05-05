@@ -18,8 +18,9 @@ export function isInitialized(): boolean {
     if (adapter.isBrowserAutomation) return false; // Only count API platforms for MVP
 
     try {
-      const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get();
-      if (result && typeof result.api_keys_encrypted === 'string') {
+      const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
+        { api_keys_encrypted?: string } | undefined;
+      if (result?.api_keys_encrypted) {
         const apiKeys = JSON.parse(result.api_keys_encrypted);
         return Boolean(apiKeys[getAdapterId(adapter)]);
       }

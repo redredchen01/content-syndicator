@@ -36,8 +36,9 @@ const API_CONNECTED: Record<string, () => boolean> = {
 
 function hasStoredApiKey(platformId: string): boolean {
   try {
-    const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get();
-    if (result && typeof result.api_keys_encrypted === 'string') {
+    const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
+      { api_keys_encrypted?: string } | undefined;
+    if (result?.api_keys_encrypted) {
       const apiKeys = JSON.parse(result.api_keys_encrypted);
       return Boolean(apiKeys[platformId]);
     }
@@ -78,8 +79,9 @@ function getPlatformStatus(adapter: PlatformAdapter) {
   // Get test status from database
   let testStatus: any = { connected_at: null, last_test_error: null, test_timestamp: null };
   try {
-    const result = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get();
-    if (result && typeof result.platform_test_status === 'string') {
+    const result = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
+      { platform_test_status?: string } | undefined;
+    if (result?.platform_test_status) {
       const statusMap = JSON.parse(result.platform_test_status);
       testStatus = statusMap[getAdapterId(adapter)] || testStatus;
     }
@@ -284,12 +286,12 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
 
     process.env[envVar] = apiKey;
 
-    const testResult = await adapter.testConnection();
+    const testResult = await adapter.testConnection?.();
 
     // Restore original env
     process.env = originalEnv;
 
-    if (!testResult.ok) {
+    if (testResult && !testResult.ok) {
       logger.warn(`[Admin] API key validation failed for ${adapter.name}: ${testResult.error}`);
       return res.status(422).json({ ok: false, error: testResult.error });
     }
@@ -298,27 +300,22 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
     const encrypted = encryptApiKey(apiKey);
 
     // Get existing API keys
-    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get();
+    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
+      { api_keys_encrypted?: string } | undefined;
     let apiKeys: Record<string, string> = {};
-
-    if (profileRow && typeof profileRow.api_keys_encrypted === 'string') {
-      try {
-        apiKeys = JSON.parse(profileRow.api_keys_encrypted);
-      } catch (e) {
-        logger.warn('Failed to parse existing API keys, starting fresh');
-      }
+    if (profileRow?.api_keys_encrypted) {
+      try { apiKeys = JSON.parse(profileRow.api_keys_encrypted); }
+      catch (e) { logger.warn('Failed to parse existing API keys, starting fresh'); }
     }
 
     apiKeys[platformId] = encrypted;
 
-    // Update database
     const now = new Date().toISOString();
     const testStatus: Record<string, any> = {};
-    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get();
-    if (statusRow && typeof statusRow.platform_test_status === 'string') {
-      try {
-        Object.assign(testStatus, JSON.parse(statusRow.platform_test_status));
-      } catch (e) {}
+    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
+      { platform_test_status?: string } | undefined;
+    if (statusRow?.platform_test_status) {
+      try { Object.assign(testStatus, JSON.parse(statusRow.platform_test_status)); } catch (e) {}
     }
 
     testStatus[platformId] = {
@@ -435,13 +432,13 @@ router.post('/api/platforms/batch-validate', async (req, res) => {
         }
 
         process.env[envVar] = apiKey;
-        const testResult = await adapter.testConnection();
+        const testResult = await adapter.testConnection?.();
         process.env = originalEnv;
 
         return {
           platformId,
-          ok: testResult.ok,
-          error: testResult.error,
+          ok: testResult?.ok ?? true,
+          error: testResult?.error,
         };
       }),
     );

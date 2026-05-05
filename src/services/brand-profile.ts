@@ -264,8 +264,9 @@ export function updatePreferredPlatforms(
  */
 export function getPreferredPlatforms(db: Database.Database): string[] {
   try {
-    const result = db.prepare('SELECT preferred_platforms_json FROM brand_profiles LIMIT 1').get();
-    if (result && typeof result.preferred_platforms_json === 'string') {
+    const result = db.prepare('SELECT preferred_platforms_json FROM brand_profiles LIMIT 1').get() as
+      { preferred_platforms_json?: string } | undefined;
+    if (result?.preferred_platforms_json) {
       return JSON.parse(result.preferred_platforms_json);
     }
   } catch (e) {

@@ -51,10 +51,9 @@ export async function validateAllCredentials(db: Database.Database): Promise<Cre
   const results: CredentialValidationResult[] = [];
 
   try {
-    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get();
-    if (!profileRow || typeof profileRow.api_keys_encrypted !== 'string') {
-      return results;
-    }
+    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
+      { api_keys_encrypted?: string } | undefined;
+    if (!profileRow?.api_keys_encrypted) return results;
 
     let apiKeys: Record<string, string> = {};
     try {
@@ -67,11 +66,10 @@ export async function validateAllCredentials(db: Database.Database): Promise<Cre
     const now = new Date().toISOString();
     const testStatus: Record<string, any> = {};
 
-    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get();
-    if (statusRow && typeof statusRow.platform_test_status === 'string') {
-      try {
-        Object.assign(testStatus, JSON.parse(statusRow.platform_test_status));
-      } catch (e) {}
+    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
+      { platform_test_status?: string } | undefined;
+    if (statusRow?.platform_test_status) {
+      try { Object.assign(testStatus, JSON.parse(statusRow.platform_test_status)); } catch (e) {}
     }
 
     // Parallel validation with concurrency limit (3 at a time)

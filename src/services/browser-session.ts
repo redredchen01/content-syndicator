@@ -2,7 +2,8 @@ import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
 import { chromium } from 'playwright';
-import { Extract } from 'unzipper';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { Extract } = require('unzipper') as { Extract: (opts: { path: string }) => NodeJS.WritableStream };
 import { acquirePage } from '../utils/browserManager';
 import { PlatformAdapter } from '../adapters/base';
 import { allAdapters } from '../adapters';
@@ -122,7 +123,7 @@ export async function importSessions(zipBuffer: Buffer): Promise<ImportSessionsR
         }
 
         let content = '';
-        entry.on('data', (chunk) => {
+        entry.on('data', (chunk: Buffer) => {
           content += chunk.toString();
         });
 
@@ -130,11 +131,11 @@ export async function importSessions(zipBuffer: Buffer): Promise<ImportSessionsR
           entries.push({ fileName, content });
         });
 
-        entry.on('error', (err) => {
+        entry.on('error', (err: Error) => {
           if (!processingError) processingError = err;
         });
       })
-      .on('error', (err) => {
+      .on('error', (err: Error) => {
         if (!processingError) processingError = err;
       })
       .on('finish', async () => {
@@ -171,8 +172,8 @@ export async function importSessions(zipBuffer: Buffer): Promise<ImportSessionsR
               // Test connection for imported platform
               const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
               if (adapter) {
-                const testResult = await adapter.testConnection();
-                result.tested[platformId] = testResult;
+                const testResult = await adapter.testConnection?.();
+                if (testResult) result.tested[platformId] = testResult;
               }
             } catch (e: any) {
               result.failed.push({ platform: platformId, error: `Invalid JSON: ${e.message}` });
