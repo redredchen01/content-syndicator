@@ -305,3 +305,46 @@ router.post('/api/bulk-publish', upload.single('file'), (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ---------------------------------------------------------------------------
+// v0.2 API: generate variants + dispatch publish_jobs
+// ---------------------------------------------------------------------------
+
+import { generateVariants } from '../services/variant-generator';
+import { attachAnchors } from '../services/anchor-generator';
+import { runLint } from '../services/lint';
+import { getProfile } from '../services/brand-profile';
+import { anchorHistory } from '../db/repositories';
+import { dispatchVariantJobs } from '../services/queue/publish-worker';
+
+router.post('/api/v2/generate', asyncRoute(async (req, res) => {
+  const { draft, title, target_url_override } = req.body;
+  if (!draft) return res.status(400).json({ error: 'draft is required' });
+
+  const brand = getProfile(db);
+  if (!brand) return res.status(400).json({ error: 'Brand profile not configured' });
+
+  // Step 1: Generate 7 variant bodies (concurrency=3)
+  const { batchId, variants } = await generateVariants({ draft, title, target_url_override, brand }, db);
+
+  // Step 2: Attach anchor words (concurrency=3)
+  const recentTopAnchors = anchorHistory.topInRecentBatches(db, 30, 10).map(r => r.anchor);
+  const withAnchors = await attachAnchors(variants, brand, recentTopAnchors, db);
+
+  // Step 3: Run lint gate
+  const lintResult = runLint(withAnchors, brand);
+
+  res.json({ batchId, variants: withAnchors, lintResult });
+}));
+
+router.post('/api/v2/dispatch', asyncRoute(async (req, res) => {
+  const { batchId, variants } = req.body;
+  if (!batchId || !Array.isArray(variants)) {
+    return res.status(400).json({ error: 'batchId and variants[] are required' });
+  }
+
+  dispatchVariantJobs(variants, batchId, db);
+
+  const jobs = publishJobs.byBatch(db, batchId);
+  res.json({ batchId, jobsCreated: jobs.length });
+}));

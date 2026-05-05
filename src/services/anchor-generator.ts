@@ -16,7 +16,8 @@ import { runParallel } from '../utils/parallel';
 import { llmCalls } from '../db/repositories';
 import { computeLlmCost } from '../constants';
 import { logger } from '../utils/logger';
-import type { Variant, BrandProfile } from '../types';
+import type { Variant } from '../types';
+import type { BrandProfile } from '../db/repositories';
 
 export const NAKED_URL_FALLBACK = '__naked_url__';
 const MAX_RETRIES = 3;
