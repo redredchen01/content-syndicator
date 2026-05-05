@@ -21,6 +21,21 @@
 
   <div id="status-banner" class="hidden mb-6 px-4 py-3 rounded-lg text-sm"></div>
 
+  <!-- 自动配置区域 -->
+  <div class="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-5">
+    <h2 class="text-base font-semibold text-blue-800 mb-1">⚡ 自动配置（Beta）</h2>
+    <p class="text-sm text-blue-700 mb-3">输入品牌官网地址，系统自动分析并填充下方表单，15-30 秒。</p>
+    <div class="flex gap-2">
+      <input id="auto-url" type="url" placeholder="https://your-brand.com"
+             class="flex-1 border border-blue-300 rounded-md px-3 py-2 text-sm" />
+      <button type="button" id="auto-btn"
+              class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium whitespace-nowrap">
+        分析并填充
+      </button>
+    </div>
+    <div id="auto-status" class="mt-2 text-sm hidden"></div>
+  </div>
+
   <form id="brand-form" class="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
 
     <!-- Required fields -->
@@ -255,6 +270,49 @@
     }
   });
 
+  async function autoConfigureFromUrl() {
+    const url = $('auto-url').value.trim();
+    if (!url) return;
+
+    const btn = $('auto-btn');
+    const status = $('auto-status');
+
+    btn.disabled = true;
+    btn.textContent = '分析中...';
+    status.textContent = '正在爬取并分析品牌网址，请稍候（15-30 秒）…';
+    status.className = 'mt-2 text-sm text-blue-700';
+    status.classList.remove('hidden');
+
+    try {
+      const res = await fetch('/api/v2/brand-profile/auto-configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      const p = data.profile;
+      // 填充表单（只覆盖非空字段）
+      if (p.name) $('name').value = p.name;
+      if (p.target_urls?.length) $('target_urls').value = joinTargetUrls(p.target_urls);
+      if (p.exposure_blocklist?.length) $('exposure_blocklist').value = joinList(p.exposure_blocklist);
+      if (p.name_variants?.length) $('name_variants').value = joinList(p.name_variants);
+      if (p.signature) $('signature').value = p.signature;
+
+      const warningText = data.warnings?.length ? `警告：${data.warnings.join('；')}` : '';
+      status.textContent = `✓ 已自动填充（${data.source === 'fallback' ? '降级模式' : 'AI 分析'}）。请检查字段后点击保存。${warningText}`;
+      status.className = 'mt-2 text-sm text-green-700';
+    } catch (err) {
+      status.textContent = '自动配置失败：' + err.message + '。请手动填写或重试。';
+      status.className = 'mt-2 text-sm text-red-700';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '分析并填充';
+    }
+  }
+
+  $('auto-btn').addEventListener('click', autoConfigureFromUrl);
   $('reset-btn').addEventListener('click', load);
   load();
 </script>

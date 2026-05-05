@@ -6,9 +6,10 @@ import { PlatformAdapter } from '../adapters/base';
 import { allAdapters } from '../adapters/index';
 import { db } from '../db';
 import { getProfile, saveProfile, isReadyForDispatch } from '../services/brand-profile';
+import { autoConfigureFromUrl } from '../services/brand-auto-configure';
 import { runPrecheck } from '../services/anchor-monitor';
 import { acquirePage, releasePage } from '../utils/browserManager';
-import { syncRoute } from './_helpers';
+import { asyncRoute, syncRoute } from './_helpers';
 import {
   AUTH_DIR,
   getBrowserAuthMode,
@@ -101,6 +102,15 @@ router.put('/api/v2/brand-profile', syncRoute((req, res) => {
   if (!result.ok) return res.status(422).json({ errors: result.errors });
   const dispatch = isReadyForDispatch(db);
   res.json({ profile: result.profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
+}));
+
+router.post('/api/v2/brand-profile/auto-configure', asyncRoute(async (req, res) => {
+  const { url } = req.body ?? {};
+  if (!url || !/^https?:\/\//.test(url)) {
+    return res.status(400).json({ error: '请提供有效的品牌网址（http/https）' });
+  }
+  const result = await autoConfigureFromUrl(url);
+  res.json(result);
 }));
 
 router.post('/api/v2/precheck', syncRoute((req, res) => {
