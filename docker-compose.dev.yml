@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  syndicator-dev:
+    build: .
+    container_name: content-syndicator-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      # 挂载源代码，支持热重载（nodemon 会监听文件变化）
+      - .:/app
+      # 排除 node_modules，使用容器内的版本避免平台不兼容
+      - /app/node_modules
+      # 数据和认证目录持久化
+      - ./.data:/app/.data
+      - ./.auth:/app/.auth
+    environment:
+      - NODE_ENV=development
+      # 开发模式显示浏览器窗口（用于调试 browser-automation）
+      - BROWSER_HEADLESS=false
+      - ENABLE_BROWSER_AUTOMATION=true
+      # 日志级别设为 DEBUG
+      - LOG_LEVEL=debug
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # 开发模式不依赖外部服务
+    depends_on: []

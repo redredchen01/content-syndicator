@@ -6,6 +6,8 @@ dist/
 .env
 .env.local
 .env.*.local
+.dev.env
+.dev.env.local
 .auth/
 
 # Local data (SQLite + transient files)
@@ -16,6 +18,7 @@ dist/
 .data/agent-memory.json
 .data/performance-metrics.json
 .data/scrape-cache/
+.data/logs/
 
 # Server logs
 server.out

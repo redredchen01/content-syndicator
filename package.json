@@ -8,8 +8,12 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "start": "tsx src/index.ts",
+    "dev": "./start-dev.sh",
     "preflight": "tsx scripts/preflight-check.ts",
-    "check:deps": "tsx scripts/check-circular-deps.ts"
+    "check:deps": "tsx scripts/check-circular-deps.ts",
+    "ci:check": "tsx scripts/ci-check.ts",
+    "ci:check:full": "tsx scripts/ci-check.ts --full",
+    "ci:check:strict": "tsx scripts/ci-check.ts --strict"
   },
   "keywords": [],
   "author": "",

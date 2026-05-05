@@ -1,0 +1,52 @@
+{
+  "timestamp": "2026-05-05T06:08:31.759Z",
+  "nodeVersion": "v25.9.0",
+  "npmVersion": "11.12.1",
+  "results": [
+    {
+      "name": "Node.js",
+      "status": "pass",
+      "message": "v25.9.0 (≥18 required)"
+    },
+    {
+      "name": "npm",
+      "status": "pass",
+      "message": "v11.12.1 (≥9 required)"
+    },
+    {
+      "name": "Dependencies",
+      "status": "pass",
+      "message": "all critical packages installed"
+    },
+    {
+      "name": "Environment",
+      "status": "fail",
+      "message": "missing required: NODE_ENV"
+    },
+    {
+      "name": "Database",
+      "status": "pass",
+      "message": "SQLite database accessible"
+    },
+    {
+      "name": "Logs Directory",
+      "status": "pass",
+      "message": ".data/logs/ is writable"
+    },
+    {
+      "name": "Circular Deps",
+      "status": "pass",
+      "message": "no circular dependencies detected"
+    },
+    {
+      "name": "Git",
+      "status": "warn",
+      "message": "7 uncommitted changes"
+    }
+  ],
+  "summary": {
+    "pass": 6,
+    "warn": 1,
+    "fail": 1
+  }
+}
