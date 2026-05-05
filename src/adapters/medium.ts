@@ -1,4 +1,4 @@
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
 export class MediumAdapter extends BaseAdapter {
   name = 'Medium';
@@ -40,6 +40,24 @@ export class MediumAdapter extends BaseAdapter {
       throw new Error(data.errors?.[0]?.message || 'Failed to publish to Medium');
     } catch (error: any) {
       return this.fail(error);
+    }
+  }
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const token = process.env.MEDIUM_INTEGRATION_TOKEN;
+    if (!token) return { ok: false, error: 'API key not configured' };
+
+    try {
+      const response = await fetch('https://api.medium.com/v1/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        return { ok: false, error: `${response.status} ${response.statusText}` };
+      }
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
     }
   }
 }

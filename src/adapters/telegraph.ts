@@ -1,9 +1,20 @@
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
 export class TelegraphAdapter extends BaseAdapter {
   name = 'Telegra.ph';
   canPublishAutomatically = true;
   private accessToken?: string;
+
+  async testConnection(): Promise<TestConnectionResult> {
+    try {
+      const response = await fetch('https://api.telegra.ph/getPageList?access_token=test&limit=1');
+      const data = await response.json();
+      if (response.ok || data.ok === false) return { ok: true };
+      return { ok: false, error: 'Failed to connect to Telegraph API' };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
+    }
+  }
 
   private safeTitle(title: string) {
     const cleaned = title.replace(/\s+/g, ' ').trim();

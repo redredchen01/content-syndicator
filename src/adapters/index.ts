@@ -8,6 +8,18 @@ import { BloggerAdapter } from './blogger';
 import { WordPressAdapter } from './wordpress';
 import { BrowserAutomationAdapter } from './browser';
 
+// Export adapter classes for testing
+export {
+  DevToAdapter,
+  TelegraphAdapter,
+  MediumAdapter,
+  HashnodeAdapter,
+  GitHubAdapter,
+  BloggerAdapter,
+  WordPressAdapter,
+  BrowserAutomationAdapter,
+};
+
 export const allAdapters: PlatformAdapter[] = [
   new TelegraphAdapter(),
   new DevToAdapter(),

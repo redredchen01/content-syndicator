@@ -4,12 +4,18 @@ import type { PublishResult, PublishOptions, PlatformAdapter } from '../types';
 // Re-export for adapter files that import from './base'
 export type { PublishResult, PublishOptions, PlatformAdapter };
 
+export interface TestConnectionResult {
+  ok: boolean;
+  error?: string;
+}
+
 /** Shared helpers — extend instead of implementing PlatformAdapter directly. */
 export abstract class BaseAdapter implements PlatformAdapter {
   abstract name: string;
   isBrowserAutomation?: boolean;
   canPublishAutomatically?: boolean;
   abstract publish(options: PublishOptions): Promise<PublishResult>;
+  abstract testConnection(): Promise<TestConnectionResult>;
 
   protected ok(publishedUrl: string): PublishResult {
     return { platform: this.name, success: true, publishedUrl };

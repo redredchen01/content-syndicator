@@ -1,8 +1,26 @@
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 import { google } from 'googleapis';
 
 export class BloggerAdapter extends BaseAdapter {
   name = 'Blogger';
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const credsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    const blogId = process.env.BLOGGER_BLOG_ID;
+    if (!credsJson || !blogId) return { ok: false, error: 'GOOGLE_APPLICATION_CREDENTIALS_JSON or BLOGGER_BLOG_ID not configured' };
+
+    try {
+      const auth = new google.auth.GoogleAuth({
+        credentials: JSON.parse(credsJson),
+        scopes: ['https://www.googleapis.com/auth/blogger'],
+      });
+      const blogger = google.blogger({ version: 'v3', auth });
+      await blogger.blogs.get({ blogId });
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: error?.message ?? String(error) };
+    }
+  }
 
   async publish(options: PublishOptions): Promise<PublishResult> {
     const { title, markdownContent, originalUrl, publishStatus = 'draft', tags } = options;

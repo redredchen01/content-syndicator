@@ -1,7 +1,7 @@
 import { type Page } from 'playwright';
 import path from 'path';
 import fs from 'fs';
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 import { logger } from '../utils/logger';
 import { getBrowser, acquirePage, releasePage } from '../utils/browserManager';
 import { analyzeDOMForSelectors } from '../llm';
@@ -30,6 +30,35 @@ export class BrowserAutomationAdapter extends BaseAdapter {
       config.customAutomation ||
       (config.titleSelector && config.contentSelector && config.publishButtonSelector),
     );
+  }
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const cleanId = this.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const authFile = path.join(process.cwd(), '.auth', `${cleanId}.json`);
+
+    if (!fs.existsSync(authFile)) {
+      return { ok: false, error: `No saved login session found for ${this.name}. Please authenticate using 1-Click Connect.` };
+    }
+
+    if (process.env.ENABLE_BROWSER_AUTOMATION !== 'true') {
+      return { ok: false, error: 'Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true to enable.' };
+    }
+
+    let context;
+    let page;
+    try {
+      const browser = await getBrowser();
+      context = await browser.newContext({ storageState: authFile });
+      page = await acquirePage(context);
+
+      await page.goto(this.config.composeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: `Failed to load session: ${error?.message ?? String(error)}` };
+    } finally {
+      if (page) await releasePage(page).catch(() => {});
+      await context?.close();
+    }
   }
 
   async publish(options: PublishOptions): Promise<PublishResult> {
