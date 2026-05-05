@@ -9,6 +9,7 @@ import { getProfile, saveProfile, isReadyForDispatch } from '../services/brand-p
 import { runPrecheck } from '../services/anchor-monitor';
 import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
+import { encryptApiKey, decryptApiKey } from '../utils/encryption';
 import {
   AUTH_DIR,
   getBrowserAuthMode,
@@ -33,9 +34,24 @@ const API_CONNECTED: Record<string, () => boolean> = {
   'WordPress':  () => Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD),
 };
 
+function hasStoredApiKey(platformId: string): boolean {
+  try {
+    const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get();
+    if (result && typeof result.api_keys_encrypted === 'string') {
+      const apiKeys = JSON.parse(result.api_keys_encrypted);
+      return Boolean(apiKeys[platformId]);
+    }
+  } catch (e) {
+    logger.warn(`Failed to check stored API key for ${platformId}`);
+  }
+  return false;
+}
+
 function isAdapterConnected(adapter: PlatformAdapter): boolean {
   if (adapter.isBrowserAutomation) return isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter);
-  return API_CONNECTED[adapter.name]?.() ?? false;
+  const adapterConnected = API_CONNECTED[adapter.name]?.() ?? false;
+  // Also check if there's a stored API key
+  return adapterConnected || hasStoredApiKey(getAdapterId(adapter));
 }
 
 function isDefaultPublishTarget(adapter: PlatformAdapter) {
@@ -59,7 +75,19 @@ function getPlatformStatus(adapter: PlatformAdapter) {
     reason = 'Ready for default auto-publish';
   }
 
-  return { connected, defaultEligible, reason };
+  // Get test status from database
+  let testStatus: any = { connected_at: null, last_test_error: null, test_timestamp: null };
+  try {
+    const result = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get();
+    if (result && typeof result.platform_test_status === 'string') {
+      const statusMap = JSON.parse(result.platform_test_status);
+      testStatus = statusMap[getAdapterId(adapter)] || testStatus;
+    }
+  } catch (e) {
+    logger.warn(`Failed to read platform test status: ${e}`);
+  }
+
+  return { connected, defaultEligible, reason, ...testStatus };
 }
 
 export function getDefaultPublishingPlatforms() {
@@ -213,5 +241,111 @@ router.post('/api/auth/test', async (req, res) => {
       ? ' If you selected common Chrome profile mode, close all Chrome windows first or switch to Installed Chrome, separate profile.'
       : '';
     if (!res.headersSent) res.status(500).json({ error: `${message}${profileHint}` });
+  }
+});
+
+// PATCH /api/platforms/:platformId/api-key — update and validate API key
+router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
+  try {
+    const { platformId } = req.params;
+    const { apiKey } = req.body ?? {};
+
+    if (typeof apiKey !== 'string' || apiKey.trim().length === 0) {
+      return res.status(400).json({ error: 'API key is required' });
+    }
+
+    // Find adapter
+    const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
+    if (!adapter || adapter.isBrowserAutomation) {
+      return res.status(404).json({ error: 'Platform not found or is browser automation' });
+    }
+
+    logger.info(`[Admin] Testing API key for ${adapter.name}...`);
+
+    // Validate API key by calling testConnection()
+    // Temporarily set the environment variable for testing
+    const originalEnv = { ...process.env };
+
+    // Map platformId to environment variable name
+    const envKeyMap: Record<string, string> = {
+      'devto': 'DEVTO_API_KEY',
+      'medium': 'MEDIUM_INTEGRATION_TOKEN',
+      'hashnode': 'HASHNODE_TOKEN',
+      'github': 'GITHUB_TOKEN',
+      'blogger': 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+      'wordpress': 'WORDPRESS_SITE_URL',
+      'telegraph': 'TELEGRA_PH_TOKEN',
+    };
+
+    const envVar = envKeyMap[platformId];
+    if (!envVar) {
+      return res.status(404).json({ error: 'Cannot validate this platform type' });
+    }
+
+    process.env[envVar] = apiKey;
+
+    const testResult = await adapter.testConnection();
+
+    // Restore original env
+    process.env = originalEnv;
+
+    if (!testResult.ok) {
+      logger.warn(`[Admin] API key validation failed for ${adapter.name}: ${testResult.error}`);
+      return res.status(422).json({ ok: false, error: testResult.error });
+    }
+
+    // Encrypt and store API key
+    const encrypted = encryptApiKey(apiKey);
+
+    // Get existing API keys
+    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get();
+    let apiKeys: Record<string, string> = {};
+
+    if (profileRow && typeof profileRow.api_keys_encrypted === 'string') {
+      try {
+        apiKeys = JSON.parse(profileRow.api_keys_encrypted);
+      } catch (e) {
+        logger.warn('Failed to parse existing API keys, starting fresh');
+      }
+    }
+
+    apiKeys[platformId] = encrypted;
+
+    // Update database
+    const now = new Date().toISOString();
+    const testStatus: Record<string, any> = {};
+    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get();
+    if (statusRow && typeof statusRow.platform_test_status === 'string') {
+      try {
+        Object.assign(testStatus, JSON.parse(statusRow.platform_test_status));
+      } catch (e) {}
+    }
+
+    testStatus[platformId] = {
+      connected_at: now,
+      last_test_error: null,
+      test_timestamp: now,
+    };
+
+    db.prepare(`
+      UPDATE brand_profiles
+      SET api_keys_encrypted = ?, platform_test_status = ?, updated_at = ?
+      WHERE brand_id = 'default'
+    `).run(JSON.stringify(apiKeys), JSON.stringify(testStatus), now);
+
+    logger.info(`[Admin] API key stored successfully for ${adapter.name}`);
+
+    res.json({
+      ok: true,
+      platform: adapter.name,
+      connected_at: now,
+      test_timestamp: now,
+    });
+  } catch (error: any) {
+    logger.error('[Admin] Failed to update API key', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Failed to update API key',
+    });
   }
 });

@@ -81,6 +81,8 @@ export function applyV2Schema(db: Database.Database): void {
       jaccard_threshold REAL DEFAULT 0.5,
       digest_channel TEXT CHECK(digest_channel IN ('none','email','telegram')) DEFAULT 'none',
       digest_destination TEXT,
+      api_keys_encrypted TEXT DEFAULT '{}',
+      platform_test_status TEXT DEFAULT '{}',
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -204,4 +206,8 @@ export function applyV2Schema(db: Database.Database): void {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add Unit 3 columns for API key storage and platform test status
+  addColumnIfMissing(db, 'brand_profiles', 'api_keys_encrypted', "TEXT DEFAULT '{}'");
+  addColumnIfMissing(db, 'brand_profiles', 'platform_test_status', "TEXT DEFAULT '{}'");
 }
