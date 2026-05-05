@@ -1,31 +1,13 @@
 import { OpenAI } from 'openai';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
-import { ChatCompletionTool } from 'openai/resources/chat/completions';
-import { retryOperation } from '../utils/retry';
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
+import { retryOperation } from '../utils/smartRetry';
 import { RETRY_CONFIG } from '../constants';
 import { logger } from '../utils/logger';
+import type { LLMMessage, LLMResponse, LLMWithToolsOptions, ToolCall } from '../types';
 
-export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  tool_calls?: any[];
-  tool_call_id?: string;
-  name?: string;
-}
-
-export interface LLMResponse {
-  content: string;
-  tool_calls?: any[];
-  raw?: any;
-}
-
-export interface LLMWithToolsOptions {
-  model?: string;
-  messages: LLMMessage[];
-  tools?: ChatCompletionTool[];
-  temperature?: number;
-  maxTokens?: number;
-}
+// Re-export so existing callers (agent/core.ts) don't need to change imports
+export type { LLMMessage, LLMResponse, LLMWithToolsOptions };
 
 export async function invokeLLMWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
   const selectedModel = options.model || process.env.SELECTED_MODEL || '';
@@ -66,7 +48,7 @@ async function invokeOpenAIWithTools(options: LLMWithToolsOptions): Promise<LLMR
     const response = await openai.chat.completions.create({
       model: options.model || 'gpt-4o-mini',
       messages: options.messages as any,
-      tools: options.tools,
+      tools: options.tools as ChatCompletionTool[] | undefined,
       temperature: options.temperature ?? 0.7,
       max_tokens: options.maxTokens,
     });
@@ -75,10 +57,10 @@ async function invokeOpenAIWithTools(options: LLMWithToolsOptions): Promise<LLMR
 
     return {
       content: message.content || '',
-      tool_calls: message.tool_calls,
+      tool_calls: message.tool_calls as ToolCall[] | undefined,
       raw: response,
     };
-  }, RETRY_CONFIG.MAX_ATTEMPTS, RETRY_CONFIG.BASE_DELAY_MS, RETRY_CONFIG.MAX_DELAY_MS);
+  }, RETRY_CONFIG.MAX_ATTEMPTS);
 }
 
 async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
@@ -134,7 +116,7 @@ async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMR
       tool_calls: [], // Simplified - full tool support would parse function calls from response
       raw: result,
     };
-  }, RETRY_CONFIG.MAX_ATTEMPTS, RETRY_CONFIG.BASE_DELAY_MS, RETRY_CONFIG.MAX_DELAY_MS);
+  }, RETRY_CONFIG.MAX_ATTEMPTS);
 }
 
 export async function invokeLLMSimple(prompt: string, fallbackContent?: string, fallbackTitle?: string): Promise<any> {

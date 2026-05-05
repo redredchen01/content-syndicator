@@ -93,7 +93,7 @@ export interface LLMResponse {
 export interface LLMWithToolsOptions {
   model?: string;
   messages: LLMMessage[];
-  tools?: ToolDefinition[];
+  tools?: unknown[]; // adapter-specific tool definitions (e.g. ChatCompletionTool from openai SDK)
   temperature?: number;
   maxTokens?: number;
 }
@@ -128,11 +128,6 @@ export interface PlatformAdapter {
   isBrowserAutomation?: boolean;
   canPublishAutomatically?: boolean;
   publish(options: PublishOptions): Promise<PublishResult>;
-  config?: {
-    composeUrl?: string;
-    authFileName?: string;
-    customAutomation?: (page: unknown) => Promise<void>;
-  };
 }
 
 // ==================== 数据库 ====================

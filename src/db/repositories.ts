@@ -316,6 +316,21 @@ export const publishJobs = {
     `).run(id);
   },
 
+  markSucceededWithUrl(db: Database.Database, id: number, publishedUrl: string): void {
+    db.prepare(`
+      UPDATE publish_jobs
+      SET status = 'succeeded', last_error = NULL,
+          metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(JSON.stringify({ publishedUrl }), id);
+  },
+
+  markRunning(db: Database.Database, id: number): void {
+    db.prepare(
+      `UPDATE publish_jobs SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    ).run(id);
+  },
+
   markSkipped(db: Database.Database, id: number, reason: string): void {
     db.prepare(`
       UPDATE publish_jobs

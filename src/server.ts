@@ -11,6 +11,7 @@ import { PlatformAdapter } from './adapters/base';
 import { allAdapters } from './adapters/index';
 import { appendToSheet } from './sheets';
 import { db, savePost, getPostsHistory } from './db';
+import { publishJobs } from './db/repositories';
 import { logger, randomSleep } from './utils/logger';
 import { getProfile, saveProfile, isReadyForDispatch } from './services/brand-profile';
 import { runPrecheck } from './services/anchor-monitor';
@@ -18,8 +19,42 @@ import { runPrecheck } from './services/anchor-monitor';
 export const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// ---------------------------------------------------------------------------
+// Route helpers — eliminate repetitive try/catch boilerplate
+// ---------------------------------------------------------------------------
+type Req = express.Request;
+type Res = express.Response;
+
+function asyncRoute(fn: (req: Req, res: Res) => Promise<unknown>) {
+  return async (req: Req, res: Res) => {
+    try {
+      await fn(req, res);
+    } catch (error: any) {
+      logger.error(`${req.method} ${req.path}`, error);
+      if (!res.headersSent) res.status(500).json({ error: error.message });
+    }
+  };
+}
+
+function syncRoute(fn: (req: Req, res: Res) => unknown) {
+  return (req: Req, res: Res) => {
+    try {
+      fn(req, res);
+    } catch (error: any) {
+      logger.error(`${req.method} ${req.path}`, error);
+      res.status(500).json({ error: error.message });
+    }
+  };
+}
 // Serve static files from the public directory
 app.use(express.static(path.join(__dirname, '../public')));
+
+// Health check — must be before all API routes so Docker healthcheck always succeeds
+app.get('/health', (_req, res) => {
+  const { version } = require('../package.json');
+  res.json({ status: 'ok', uptime: process.uptime(), version });
+});
 
 const upload = multer({ dest: path.join(process.cwd(), '.data', 'uploads') });
 
@@ -365,49 +400,27 @@ app.get('/api/models', async (req, res) => {
   }
 });
 
-app.post('/api/settings', (req, res) => {
-  try {
-    const { 
-      GEMINI_API_KEY, OPENAI_API_KEY, DEVTO_API_KEY, MEDIUM_INTEGRATION_TOKEN, 
-      GOOGLE_APPLICATION_CREDENTIALS_JSON, GOOGLE_SHEET_ID, SELECTED_MODEL,
-      GITHUB_TOKEN, HASHNODE_TOKEN, HASHNODE_PUBLICATION_ID, BLOGGER_BLOG_ID,
-      WORDPRESS_SITE_URL, WORDPRESS_USERNAME, WORDPRESS_APP_PASSWORD,
-      ENABLE_BROWSER_AUTOMATION, BROWSER_AUTH_MODE, BROWSER_AUTH_CHROME_USER_DATA_DIR, BROWSER_AUTH_CHROME_PROFILE
-    } = req.body;
-    updateEnv({ 
-      GEMINI_API_KEY, OPENAI_API_KEY, DEVTO_API_KEY, MEDIUM_INTEGRATION_TOKEN, 
-      GOOGLE_APPLICATION_CREDENTIALS_JSON, GOOGLE_SHEET_ID, SELECTED_MODEL,
-      GITHUB_TOKEN, HASHNODE_TOKEN, HASHNODE_PUBLICATION_ID, BLOGGER_BLOG_ID,
-      WORDPRESS_SITE_URL, WORDPRESS_USERNAME, WORDPRESS_APP_PASSWORD,
-      ENABLE_BROWSER_AUTOMATION, BROWSER_AUTH_MODE, BROWSER_AUTH_CHROME_USER_DATA_DIR, BROWSER_AUTH_CHROME_PROFILE
-    });
-    logger.success('Settings updated successfully via Web UI.');
-    res.json({ success: true, message: 'Settings saved' });
-  } catch (error: any) {
-    logger.error('Failed to save settings', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.post('/api/settings', syncRoute((req, res) => {
+  const KEYS = [
+    'GEMINI_API_KEY', 'OPENAI_API_KEY', 'DEVTO_API_KEY', 'MEDIUM_INTEGRATION_TOKEN',
+    'GOOGLE_APPLICATION_CREDENTIALS_JSON', 'GOOGLE_SHEET_ID', 'SELECTED_MODEL',
+    'GITHUB_TOKEN', 'HASHNODE_TOKEN', 'HASHNODE_PUBLICATION_ID', 'BLOGGER_BLOG_ID',
+    'WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD',
+    'ENABLE_BROWSER_AUTOMATION', 'BROWSER_AUTH_MODE',
+    'BROWSER_AUTH_CHROME_USER_DATA_DIR', 'BROWSER_AUTH_CHROME_PROFILE',
+  ] as const;
+  updateEnv(Object.fromEntries(KEYS.map(k => [k, req.body[k]])));
+  logger.success('Settings updated successfully via Web UI.');
+  res.json({ success: true, message: 'Settings saved' });
+}));
 
-app.get('/api/prompts', (req, res) => {
-  try {
-    res.json(getRawPrompts());
-  } catch (error: any) {
-    logger.error('API /api/prompts Error', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.get('/api/prompts', syncRoute((_, res) => res.json(getRawPrompts())));
 
-app.post('/api/prompts', (req, res) => {
-  try {
-    const { mainPrompt, promoPrompt } = req.body;
-    saveRawPrompts(mainPrompt, promoPrompt);
-    res.json({ success: true, message: 'Custom prompts saved successfully' });
-  } catch (error: any) {
-    logger.error('Failed to save custom prompts', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.post('/api/prompts', syncRoute((req, res) => {
+  const { mainPrompt, promoPrompt } = req.body;
+  saveRawPrompts(mainPrompt, promoPrompt);
+  res.json({ success: true, message: 'Custom prompts saved successfully' });
+}));
 
 // NEW: Endpoint to launch Playwright for Browser Auth (OAuth flow interception)
 app.post('/api/auth/browser', async (req, res) => {
@@ -524,164 +537,204 @@ app.post('/api/auth/test', async (req, res) => {
 // v0.2 routes — third-party-voice syndicator (Plan Unit 3 onward)
 // =============================================================================
 
-app.get('/api/v2/brand-profile', (req, res) => {
-  try {
-    const profile = getProfile(db);
-    const dispatch = isReadyForDispatch(db);
-    res.json({ profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
-  } catch (error: any) {
-    logger.error('GET /api/v2/brand-profile error', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.get('/api/v2/brand-profile', syncRoute((_, res) => {
+  const profile = getProfile(db);
+  const dispatch = isReadyForDispatch(db);
+  res.json({ profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
+}));
 
-app.put('/api/v2/brand-profile', (req, res) => {
-  try {
-    const body = req.body ?? {};
-    if (typeof body !== 'object' || body === null) {
-      return res.status(400).json({ error: 'JSON body required' });
-    }
-    if (typeof body.name !== 'string' || body.name.trim().length === 0) {
-      return res.status(422).json({
-        errors: [{ field: 'name', message: '品牌主名不能为空' }],
-      });
-    }
-    const result = saveProfile(db, body);
-    if (!result.ok) {
-      return res.status(422).json({ errors: result.errors });
-    }
-    const dispatch = isReadyForDispatch(db);
-    res.json({
-      profile: result.profile,
-      dispatchReady: dispatch.ready,
-      dispatchReport: dispatch.report,
-    });
-  } catch (error: any) {
-    logger.error('PUT /api/v2/brand-profile error', error);
-    res.status(500).json({ error: error.message });
+app.put('/api/v2/brand-profile', syncRoute((req, res) => {
+  const body = req.body ?? {};
+  if (typeof body !== 'object' || body === null) return res.status(400).json({ error: 'JSON body required' });
+  if (typeof body.name !== 'string' || body.name.trim().length === 0) {
+    return res.status(422).json({ errors: [{ field: 'name', message: '品牌主名不能为空' }] });
   }
-});
+  const result = saveProfile(db, body);
+  if (!result.ok) return res.status(422).json({ errors: result.errors });
+  const dispatch = isReadyForDispatch(db);
+  res.json({ profile: result.profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
+}));
 
 /**
  * Precheck before generation — R10b anchor concentration + R10c URL cap.
  * Body: { target_urls: string[] }
  * Returns: PrecheckResult (see anchor-monitor.ts)
  */
-app.post('/api/v2/precheck', (req, res) => {
-  try {
-    const profile = getProfile(db);
-    if (!profile) {
-      return res.status(412).json({
-        error: '品牌资料库未配置，请先访问 /admin.html 填写。',
+app.post('/api/v2/precheck', syncRoute((req, res) => {
+  const profile = getProfile(db);
+  if (!profile) return res.status(412).json({ error: '品牌资料库未配置，请先访问 /admin.html 填写。' });
+  const { target_urls } = req.body ?? {};
+  const urls: string[] = Array.isArray(target_urls)
+    ? target_urls.filter((u: unknown) => typeof u === 'string')
+    : [];
+  res.json(runPrecheck(db, urls, profile));
+}));
+
+app.get('/api/platforms', syncRoute((req, res) => {
+  const platforms = allAdapters.map(a => ({
+    name: a.name,
+    id: getAdapterId(a),
+    ...getPlatformStatus(a),
+    browserAutomation: Boolean(a.isBrowserAutomation),
+    browserAuthSupported: Boolean(a.isBrowserAutomation),
+    canPublishAutomatically: Boolean(a.canPublishAutomatically || !a.isBrowserAutomation),
+  }));
+  res.json({ platforms, defaults: getDefaultPublishingPlatforms() });
+}));
+
+app.post('/api/generate', asyncRoute(async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  logger.info(`API: Starting scrape for URL: ${url}`);
+  const scrapedData = await scrapeUrl(url);
+  logger.info('API: Calling LLM to generate Markdown content...');
+  const { title, content, tags, excerpt } = await generateMarkdown(scrapedData);
+  res.json({ title, content, originalUrl: url, tags, excerpt });
+}));
+
+app.post('/api/generate-manual', asyncRoute(async (req, res) => {
+  const { rawContent, originalUrl } = req.body;
+  if (!rawContent) return res.status(400).json({ error: 'rawContent is required' });
+
+  logger.info('API: Rewriting manual content via LLM...');
+  const { title, content, tags, excerpt } = await generateMarkdown({
+    title: 'Manual Content',
+    content: rawContent,
+    originalUrl: originalUrl || '',
+  });
+  res.json({ title, content, originalUrl, tags, excerpt });
+}));
+
+app.post('/api/generate-promo', asyncRoute(async (req, res) => {
+  const { title, content, urls } = req.body;
+  if (!title || !content || !Array.isArray(urls)) {
+    return res.status(400).json({ error: 'Missing required fields: title, content, urls' });
+  }
+  logger.info('API: Generating promotional Markdown via LLM...');
+  const promo = await generatePromoMarkdown(title, content, urls);
+  res.json({ title: promo.title, content: promo.content, tags: promo.tags, excerpt: promo.excerpt });
+}));
+
+// Batch status tracking endpoint
+app.get('/api/batch-status/:batchId', syncRoute((req, res) => {
+  const batchId = req.params.batchId as string;
+  const jobs = publishJobs.byBatch(db, batchId);
+  const total = jobs.length;
+  const completed = jobs.filter(j =>
+    ['succeeded', 'failed_terminal', 'skipped'].includes(j.status),
+  ).length;
+  res.json({
+    batchId,
+    percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+    total,
+    completed,
+    jobs,
+    isFinished: completed === total && total > 0,
+  });
+}));
+
+// Background worker simulation for async publishing
+async function runPublishingTask(batchId: string, options: any) {
+  const jobs = db.prepare(
+    `SELECT id, platform FROM publish_jobs WHERE batch_id = ? AND status = 'scheduled'`,
+  ).all(batchId);
+
+  for (const job of jobs as any[]) {
+    publishJobs.markRunning(db, job.id);
+
+    const adapter = allAdapters.find(a => a.name === job.platform);
+    if (!adapter) {
+      publishJobs.markFailed(db, job.id, 'Adapter not found', null, 2);
+      continue;
+    }
+
+    try {
+      logger.info(`[Async Worker] Publishing ${batchId} to ${job.platform}...`);
+      const result = await adapter.publish({
+        title: options.title,
+        markdownContent: options.content,
+        tags: options.tags,
+        excerpt: options.excerpt,
+        originalUrl: options.sourceUrl,
+        publishStatus: options.publishStatus,
       });
-    }
-    const { target_urls } = req.body ?? {};
-    const urls: string[] = Array.isArray(target_urls)
-      ? target_urls.filter((u: unknown) => typeof u === 'string')
-      : [];
-    const result = runPrecheck(db, urls, profile);
-    res.json(result);
-  } catch (error: any) {
-    logger.error('POST /api/v2/precheck error', error);
-    res.status(500).json({ error: error.message });
-  }
-});
 
-app.get('/api/platforms', (req, res) => {
-  try {
-    const platforms = allAdapters.map(a => ({
-      name: a.name,
-      id: getAdapterId(a),
-      ...getPlatformStatus(a),
-      browserAutomation: Boolean(a.isBrowserAutomation),
-      browserAuthSupported: Boolean(a.isBrowserAutomation),
-      canPublishAutomatically: Boolean(a.canPublishAutomatically || !a.isBrowserAutomation)
-    }));
-    res.json({ platforms, defaults: getDefaultPublishingPlatforms() });
-  } catch (error: any) {
-    logger.error('API /api/platforms Error', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/generate', async (req, res) => {
-  try {
-    const { url } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL is required' });
-
-    logger.info(`API: Starting scrape for URL: ${url}`);
-    const scrapedData = await scrapeUrl(url);
-    
-    logger.info('API: Calling LLM to generate Markdown content...');
-    const { title, content, tags, excerpt } = await generateMarkdown(scrapedData);
-
-    res.json({ title, content, originalUrl: url, tags, excerpt });
-  } catch (error: any) {
-    logger.error('API /api/generate Error', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/generate-manual', async (req, res) => {
-  try {
-    const { rawContent, originalUrl } = req.body;
-    if (!rawContent) return res.status(400).json({ error: 'rawContent is required' });
-
-    logger.info('API: Calling LLM to rewrite Manual Markdown content...');
-    
-    // Create a mock ScrapedData object to feed into the existing generateMarkdown pipeline
-    const mockScrapedData = {
-      title: "Manual Content",
-      content: rawContent,
-      originalUrl: originalUrl || ''
-    };
-    
-    const { title, content, tags, excerpt } = await generateMarkdown(mockScrapedData);
-
-    res.json({ title, content, originalUrl, tags, excerpt });
-  } catch (error: any) {
-    logger.error('API /api/generate-manual Error', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/generate-promo', async (req, res) => {
-  try {
-    const { title, content, urls } = req.body;
-    if (!title || !content || !urls || !Array.isArray(urls)) {
-      return res.status(400).json({ error: 'Missing required fields: title, content, urls' });
+      if (result.success) {
+        publishJobs.markSucceededWithUrl(db, job.id, result.publishedUrl || '');
+      } else {
+        publishJobs.markFailed(db, job.id, result.error || 'Unknown error', null, 2);
+      }
+    } catch (err: any) {
+      publishJobs.markFailed(db, job.id, err.message, null, 2);
     }
 
-    logger.info('API: Calling LLM to generate Promotional Markdown content...');
-    const promo = await generatePromoMarkdown(title, content, urls);
-
-    res.json({ title: promo.title, content: promo.content, tags: promo.tags, excerpt: promo.excerpt });
-  } catch (error: any) {
-    logger.error('API /api/generate-promo Error', error);
-    res.status(500).json({ error: error.message });
+    // Anti-detection sleep (5–10 s between platforms)
+    await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 5000));
   }
-});
+
+  // Final sync to Sheets and local posts table once batch is done
+  const finalJobs = publishJobs.byBatch(db, batchId);
+  const formattedResults = finalJobs.map(r => ({
+    platform: r.platform,
+    success: r.status === 'succeeded',
+    error: r.last_error ?? undefined,
+    publishedUrl: r.status === 'succeeded' ? JSON.parse(r.metadata_json || '{}').publishedUrl : undefined
+  }));
+
+  appendToSheet(options.sourceUrl, options.title, formattedResults).catch(e => logger.error('Sheets sync error', e));
+  savePost(options.sourceUrl, options.title, options.content, formattedResults, batchId);
+}
 
 app.post('/api/publish', async (req, res) => {
   try {
     const { url, title, content, tags, excerpt, platforms, publishStatus } = req.body;
-    if (!title || !content) return res.status(400).json({ error: 'Missing required fields' });
+    logger.info(`API Request: /api/publish - Title: ${title}, Platforms: ${JSON.stringify(platforms)}`);
+
+    if (!title || !content) {
+      logger.warn('Publish failed: Missing title or content');
+      return res.status(400).json({ error: 'Missing required fields: title or content' });
+    }
 
     const sourceUrl = url || 'manual-content';
-    const { targetPlatforms, results } = await publishToPlatforms({
-      sourceUrl,
-      title,
-      content,
-      tags,
-      excerpt,
-      platforms,
-      publishStatus: publishStatus === 'public' ? 'public' : 'draft'
-    });
+    const targetPlatforms = resolveTargetPlatforms(platforms);
+    const batchId = `batch_${Date.now()}`;
 
-    res.json({ success: true, platforms: targetPlatforms, results });
+    if (targetPlatforms.length === 0) {
+      logger.warn('Publish failed: No platforms resolved');
+      return res.status(400).json({ error: 'No connected or valid platforms available.' });
+    }
+
+    logger.info(`Creating batch ${batchId} for ${targetPlatforms.length} platforms...`);
+
+    // 1. Initialize jobs in database with safe transaction
+    const insertJob = db.prepare(`
+      INSERT INTO publish_jobs (batch_id, variant_id, platform, job_type, status, scheduled_at, payload_json)
+      VALUES (?, 'v1', ?, 'publish', 'scheduled', CURRENT_TIMESTAMP, '{}')
+    `);
+
+    try {
+      const transaction = db.transaction((pforms) => {
+        for (const p of pforms) {
+          insertJob.run(batchId, p);
+        }
+      });
+      transaction(targetPlatforms);
+    } catch (dbErr: any) {
+      logger.error('Database insertion failed during publish', dbErr);
+      return res.status(500).json({ error: `Database Error: ${dbErr.message}` });
+    }
+
+    // 2. Start background worker (don't await)
+    runPublishingTask(batchId, {
+      sourceUrl, title, content, tags, excerpt, publishStatus: publishStatus || 'draft'
+    }).catch(e => logger.error(`Background task for ${batchId} failed early`, e));
+
+    logger.success(`Batch ${batchId} started successfully.`);
+    res.json({ success: true, batchId, message: 'Publishing task started in background' });
   } catch (error: any) {
-    logger.error('API /api/publish Error', error);
-    res.status(500).json({ error: error.message });
+    logger.error('API /api/publish Critical Error', error);
+    res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
 
@@ -741,15 +794,9 @@ app.post('/api/auto-publish', async (req, res) => {
   }
 });
 
-app.get('/api/history', (req, res) => {
-  try {
-    const history = getPostsHistory();
-    res.json(history);
-  } catch (error: any) {
-    logger.error('API /api/history Error', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+app.get('/api/history', syncRoute((_, res) => {
+  res.json(getPostsHistory());
+}));
 
 // Bulk process queue function
 async function processBulkQueue(urls: string[], targetPlatforms: string[], publishStatus: 'draft' | 'public') {
