@@ -348,3 +348,37 @@ router.post('/api/v2/dispatch', asyncRoute(async (req, res) => {
   const jobs = publishJobs.byBatch(db, batchId);
   res.json({ batchId, jobsCreated: jobs.length });
 }));
+
+// GET /api/v2/queue — for queue status page (polled every 5s)
+router.get('/api/v2/queue', syncRoute((req, res) => {
+  const { batchId } = req.query;
+  const jobs = batchId
+    ? publishJobs.byBatch(db, String(batchId))
+    : (db.prepare(
+        `SELECT * FROM publish_jobs ORDER BY created_at DESC LIMIT 200`,
+      ).all() as import('../db/repositories').PublishJob[]);
+  res.json({ jobs });
+}));
+
+// POST /api/v2/regenerate-variant — single-tab regeneration
+router.post('/api/v2/regenerate-variant', asyncRoute(async (req, res) => {
+  const { batchId, platform, draft } = req.body;
+  if (!batchId || !platform || !draft) {
+    return res.status(400).json({ error: 'batchId, platform, and draft are required' });
+  }
+
+  const brand = getProfile(db);
+  if (!brand) return res.status(400).json({ error: 'Brand profile not configured' });
+
+  // Generate variants for all platforms, find the one we need
+  const { variants } = await generateVariants({ draft, brand }, db);
+  const recentTopAnchors = anchorHistory.topInRecentBatches(db, 30, 10).map(r => r.anchor);
+  const withAnchors = await attachAnchors(variants, brand, recentTopAnchors, db);
+  const target = withAnchors.find(v => v.platform === platform);
+
+  if (!target) {
+    return res.status(404).json({ error: `Platform ${platform} not found in generated variants` });
+  }
+
+  res.json({ variant: { ...target, variant_id: `${batchId}_${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}` } });
+}));

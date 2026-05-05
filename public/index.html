@@ -1,283 +1,616 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" x-data="syndicatorApp()" x-init="init()">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>多渠道外鏈分發系統 - 儀表板</title>
+  <title>多渠道外鏈分發系統 v0.2</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    body { font-family: 'Inter', sans-serif; }
-    .nav-link.active { @apply bg-blue-50 text-blue-600 border-r-4 border-blue-600; }
+    [x-cloak] { display: none !important; }
+    .prose h1 { font-size: 1.25rem; font-weight: 700; margin-bottom: .5rem; }
+    .prose h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: .4rem; }
+    .prose p  { margin-bottom: .6rem; line-height: 1.6; }
+    .prose a  { color: #2563eb; text-decoration: underline; }
+    .prose code { background: #f3f4f6; padding: .1rem .3rem; border-radius: .2rem; font-size: .85em; }
+    .prose pre  { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: .5rem; overflow-x: auto; }
+    .prose blockquote { border-left: 3px solid #93c5fd; padding-left: 1rem; color: #6b7280; }
+    .tab-chip { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex">
 
-  <!-- Sidebar -->
-  <aside class="w-64 bg-white shadow-md flex-shrink-0 flex flex-col">
-    <div class="p-6 border-b">
-      <h1 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-        <i class="fas fa-robot text-blue-600"></i> Syndicator
-      </h1>
-      <p class="text-xs text-gray-500 mt-1">v0.2 第三方口吻分發</p>
+<!-- ── Sidebar ──────────────────────────────────────────────────── -->
+<aside class="w-56 bg-white shadow-md flex-shrink-0 flex flex-col">
+  <div class="p-5 border-b">
+    <h1 class="text-base font-bold text-gray-800 flex items-center gap-2">
+      <svg class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      Syndicator
+    </h1>
+    <p class="text-[10px] text-gray-400 mt-0.5">v0.2 第三方口吻分發</p>
+  </div>
+  <nav class="flex-1 mt-3">
+    <template x-for="item in navItems" :key="item.id">
+      <a href="#" @click.prevent="switchView(item.id)"
+         :class="view === item.id ? 'bg-blue-50 text-blue-600 border-r-4 border-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'"
+         class="flex items-center px-5 py-2.5 text-sm transition-colors">
+        <span x-text="item.icon" class="mr-2.5 text-base"></span>
+        <span x-text="item.label"></span>
+        <span x-show="item.id === 'queue' && pendingCount > 0"
+              class="ml-auto bg-amber-100 text-amber-700 text-[10px] px-1.5 rounded-full"
+              x-text="pendingCount"></span>
+      </a>
+    </template>
+  </nav>
+  <div class="p-3 border-t">
+    <div :class="brandReady ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'"
+         class="text-[11px] px-2 py-1.5 rounded text-center font-medium"
+         x-text="brandReady ? '✓ 品牌資料已就緒' : '⚠ 請先配置品牌資料'"></div>
+  </div>
+</aside>
+
+<!-- ── Main ─────────────────────────────────────────────────────── -->
+<main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+  <header class="bg-white shadow-sm px-6 py-3 flex justify-between items-center">
+    <h2 class="text-base font-semibold text-gray-700" x-text="currentTitle"></h2>
+    <div class="flex items-center gap-2 text-sm text-gray-500" x-show="view === 'publish' && phase === 'preview'">
+      <span x-text="`批次: ${batchId}`" class="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded"></span>
     </div>
-    <nav class="flex-1 mt-4">
-      <a href="#" onclick="showView('publish')" id="nav-publish" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
-        <i class="fas fa-paper-plane w-5"></i> <span class="ml-3">文章發佈</span>
-      </a>
-      <a href="#" onclick="showView('brand')" id="nav-brand" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
-        <i class="fas fa-id-card w-5"></i> <span class="ml-3">品牌資料庫</span>
-      </a>
-      <a href="#" onclick="showView('history')" id="nav-history" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
-        <i class="fas fa-history w-5"></i> <span class="ml-3">發佈歷史</span>
-      </a>
-      <a href="#" onclick="showView('settings')" id="nav-settings" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
-        <i class="fas fa-cog w-5"></i> <span class="ml-3">系統設置</span>
-      </a>
-    </nav>
-  </aside>
+  </header>
 
-  <!-- Main -->
-  <main class="flex-1 flex flex-col min-w-0">
-    <header class="bg-white shadow-sm p-4 flex justify-between items-center">
-      <h2 id="view-title" class="text-lg font-semibold text-gray-700">文章發佈</h2>
-      <div id="top-dispatch-badge" class="hidden px-3 py-1 rounded-full text-xs font-medium"></div>
-    </header>
+  <div class="flex-1 overflow-y-auto p-6">
 
-    <div class="flex-1 overflow-y-auto p-6">
-      
-      <!-- VIEW: Publish -->
-      <section id="view-publish" class="view-content hidden space-y-6">
-        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <div class="flex flex-col md:flex-row gap-4 mb-6">
-            <div class="flex-1">
-              <label class="block text-sm font-medium text-gray-700 mb-1">文章來源 URL</label>
-              <div class="flex gap-2">
-                <input type="text" id="sourceUrl" placeholder="https://..." class="flex-1 border rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
-                <button id="scrapeBtn" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">抓取並重寫</button>
-              </div>
-            </div>
+    <!-- ══ VIEW: Publish (Input Phase) ══════════════════════════════ -->
+    <div x-show="view === 'publish' && phase === 'input'" x-cloak>
+      <div class="max-w-2xl mx-auto bg-white rounded-xl border shadow-sm p-6 space-y-5">
+        <h3 class="font-semibold text-gray-800">輸入草稿 → 生成 7 個平台變體</h3>
+
+        <!-- Draft textarea -->
+        <div>
+          <div class="flex justify-between items-center mb-1">
+            <label class="text-sm font-medium text-gray-700">文章草稿 *</label>
+            <span :class="draftCharCount < 600 ? 'text-red-500' : 'text-green-600'"
+                  class="text-xs" x-text="`${draftCharCount} 字 (最少 600)`"></span>
           </div>
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="space-y-4">
-              <input type="text" id="editTitle" placeholder="標題" class="w-full border rounded-md px-3 py-2 outline-none">
-              <textarea id="editContent" rows="12" placeholder="Markdown 正文..." class="w-full border rounded-md px-3 py-2 font-mono text-sm outline-none" oninput="updatePreview()"></textarea>
-              <div class="grid grid-cols-2 gap-4">
-                <input type="text" id="editTags" placeholder="標籤 (逗號分隔)" class="w-full border rounded-md px-3 py-2 outline-none">
-                <input type="text" id="editExcerpt" placeholder="摘要" class="w-full border rounded-md px-3 py-2 outline-none">
+          <textarea x-model="draft" rows="12" @input="draftCharCount = draft.replace(/\s+/g,'').length"
+                    placeholder="粘貼您的文章草稿... 系統將生成 7 個第三方口吻變體"
+                    class="w-full border rounded-lg px-3 py-2 text-sm font-mono resize-none outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+        </div>
+
+        <!-- Title (optional) -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">標題（可選，不填則由 LLM 生成）</label>
+          <input x-model="draftTitle" type="text" placeholder="文章標題..." class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <!-- Target URL override -->
+        <div x-show="brandProfile && brandProfile.target_urls && brandProfile.target_urls.length > 1">
+          <label class="block text-sm font-medium text-gray-700 mb-1">目標落地頁（可選，默認使用品牌首選）</label>
+          <select x-model="targetUrlOverride" class="w-full border rounded-lg px-3 py-2 text-sm outline-none">
+            <option value="">— 使用品牌默認 —</option>
+            <template x-for="t in (brandProfile?.target_urls || [])" :key="t.url">
+              <option :value="t.url" x-text="`${t.url} [${t.context_tag}]`"></option>
+            </template>
+          </select>
+        </div>
+
+        <!-- Error -->
+        <div x-show="generateError" class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2 rounded-lg" x-text="generateError"></div>
+
+        <!-- Submit -->
+        <button @click="generate()" :disabled="draftCharCount < 600 || generating"
+                :class="draftCharCount < 600 || generating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'"
+                class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-sm transition-colors">
+          <span x-show="!generating">⚡ 生成 7 個平台變體（約 60-90 秒）</span>
+          <span x-show="generating" class="flex items-center justify-center gap-2">
+            <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            </svg>
+            生成中... <span x-text="generatingStep"></span>
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══ VIEW: Publish (Preview Phase) ════════════════════════════ -->
+    <div x-show="view === 'publish' && phase === 'preview'" x-cloak class="space-y-4">
+
+      <!-- Lint banner -->
+      <div x-show="lintResult && (lintResult.batchViolation || Object.keys(lintResult.variantViolations || {}).length > 0)"
+           class="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 space-y-1">
+        <div class="font-semibold text-amber-800 text-sm">⚠ Lint 警告</div>
+        <div x-show="lintResult?.batchViolation" class="text-xs text-amber-700"
+             x-text="lintResult?.batchViolation ? `批次相似度過高: ${lintResult.batchViolation.platforms[0]} ↔ ${lintResult.batchViolation.platforms[1]} (Jaccard ${(lintResult.batchViolation.similarity * 100).toFixed(0)}%)` : ''"></div>
+        <template x-for="[platform, match] in Object.entries(lintResult?.variantViolations || {})" :key="platform">
+          <div class="text-xs text-amber-700" x-text="`${platform}: 身份暴露詞「${match.matched}」`"></div>
+        </template>
+      </div>
+
+      <!-- 7-Tab preview -->
+      <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <!-- Tab bar -->
+        <div class="flex border-b overflow-x-auto">
+          <template x-for="(v, i) in variants" :key="v.platform">
+            <button @click="activeTab = i"
+                    :class="[
+                      activeTab === i ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-50',
+                      skippedPlatforms.has(v.platform) ? 'opacity-40 line-through' : ''
+                    ]"
+                    class="flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium whitespace-nowrap transition-colors">
+              <span :class="{
+                'bg-blue-500': v.persona_group === 'tech_blogger',
+                'bg-purple-500': v.persona_group === 'personal_essay',
+                'bg-orange-500': v.persona_group === 'reviewer',
+                'bg-red-500': v.generation_status === 'failed'
+              }" class="tab-chip"></span>
+              <span x-text="v.platform"></span>
+              <span x-show="v.generation_status === 'failed'" class="text-red-500">✗</span>
+              <span x-show="lintResult?.variantViolations?.[v.platform]" class="text-amber-500">!</span>
+            </button>
+          </template>
+        </div>
+
+        <!-- Tab content -->
+        <div class="p-5" x-show="variants.length > 0">
+          <template x-if="variants[activeTab]">
+            <div>
+              <div x-show="variants[activeTab].generation_status === 'failed'"
+                   class="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg mb-4">
+                <strong>生成失敗：</strong><span x-text="variants[activeTab].error"></span>
+                <button @click="regenerateTab(activeTab)" class="ml-3 text-xs underline">重試</button>
               </div>
-            </div>
-            <div class="space-y-6">
-              <div id="preview" class="border rounded-md p-4 bg-gray-50 h-[350px] overflow-y-auto prose prose-sm max-w-none">预览区</div>
-              <div class="bg-blue-50 p-4 rounded-lg">
-                <div id="platforms-list" class="flex flex-wrap gap-2 mb-4"></div>
-                <div class="flex items-center justify-between">
-                  <div class="flex gap-4 text-sm">
-                    <label><input type="radio" name="pubStatus" value="draft" checked> 草稿</label>
-                    <label><input type="radio" name="pubStatus" value="public"> 公開</label>
-                  </div>
-                  <button id="finalPublishBtn" class="bg-green-600 text-white px-6 py-2 rounded-md font-bold hover:bg-green-700 shadow-md">立即分發發佈</button>
+
+              <div x-show="variants[activeTab].generation_status === 'ok'">
+                <!-- Title -->
+                <div class="mb-3">
+                  <div class="text-xs text-gray-500 uppercase font-medium mb-1">標題</div>
+                  <div class="text-base font-semibold text-gray-800" x-text="variants[activeTab].title"></div>
+                </div>
+
+                <!-- Anchor words -->
+                <div class="mb-3 flex items-center gap-2 flex-wrap">
+                  <span class="text-xs text-gray-500 font-medium">錨詞：</span>
+                  <template x-for="anchor in variants[activeTab].anchor_words" :key="anchor">
+                    <span x-show="anchor !== '__naked_url__'"
+                          class="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full"
+                          x-text="anchor"></span>
+                    <span x-show="anchor === '__naked_url__'"
+                          class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">裸鏈（無錨詞）</span>
+                  </template>
+                </div>
+
+                <!-- Target URL -->
+                <div class="mb-3 text-xs text-gray-500">
+                  落地 URL: <a :href="variants[activeTab].target_url" target="_blank" class="text-blue-600 underline" x-text="variants[activeTab].target_url"></a>
+                </div>
+
+                <!-- Body preview -->
+                <div class="border rounded-lg bg-gray-50 p-4 max-h-80 overflow-y-auto prose prose-sm max-w-none text-sm"
+                     x-html="marked.parse(variants[activeTab].body_markdown || '')"></div>
+
+                <!-- Actions -->
+                <div class="flex gap-2 mt-4">
+                  <button @click="regenerateTab(activeTab)"
+                          :disabled="regenLoading === activeTab"
+                          class="text-xs px-3 py-1.5 border rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                    <span x-show="regenLoading !== activeTab">🔄 重新生成本 tab</span>
+                    <span x-show="regenLoading === activeTab">生成中...</span>
+                  </button>
+                  <button @click="toggleSkip(activeTab)"
+                          :class="skippedPlatforms.has(variants[activeTab].platform) ? 'bg-gray-700 text-white' : 'border hover:bg-gray-50'"
+                          class="text-xs px-3 py-1.5 rounded-lg">
+                    <span x-text="skippedPlatforms.has(variants[activeTab].platform) ? '↩ 恢復此 tab' : '✕ 跳過此 tab'"></span>
+                  </button>
                 </div>
               </div>
             </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Dispatch controls -->
+      <div class="flex items-center justify-between bg-white rounded-xl border shadow-sm px-5 py-4">
+        <div class="text-sm text-gray-600">
+          <span x-text="activeVariantCount"></span> 個平台準備發佈
+          <span x-show="skippedPlatforms.size > 0" class="text-gray-400" x-text="`（已跳過 ${skippedPlatforms.size} 個）`"></span>
+        </div>
+        <div class="flex gap-3">
+          <button @click="phase = 'input'" class="text-sm px-4 py-2 border rounded-lg hover:bg-gray-50">← 重新輸入</button>
+          <button @click="dispatch()"
+                  :disabled="!canDispatch || dispatching"
+                  :class="canDispatch && !dispatching ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed'"
+                  class="text-sm px-5 py-2 rounded-lg text-white font-semibold transition-colors">
+            <span x-show="!dispatching">🚀 一鍵發佈 (<span x-text="activeVariantCount"></span> 個)</span>
+            <span x-show="dispatching">發佈中...</span>
+          </button>
+        </div>
+      </div>
+
+      <div x-show="!canDispatch && lintHasBatchViolation" class="text-xs text-amber-600 text-center">
+        批次 Jaccard 相似度過高 — 請重新生成相似的 tab 再發佈
+      </div>
+    </div>
+
+    <!-- ══ VIEW: Queue Status ════════════════════════════════════════ -->
+    <div x-show="view === 'queue'" x-cloak>
+      <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b flex justify-between items-center">
+          <span class="font-medium text-gray-700 text-sm">作業佇列</span>
+          <span class="text-xs text-gray-400" x-text="`${queueJobs.length} 條作業 · 每 5 秒刷新`"></span>
+        </div>
+        <div x-show="queueJobs.length === 0" class="py-16 text-center text-gray-400 text-sm">暫無作業</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs" x-show="queueJobs.length > 0">
+            <thead class="bg-gray-50 border-b">
+              <tr>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">批次</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">平台</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">狀態</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">計劃時間</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">重試</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">錯誤</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <template x-for="job in queueJobs" :key="job.id">
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-2 font-mono text-gray-400" x-text="job.batch_id?.slice(0,14)"></td>
+                  <td class="px-4 py-2 text-gray-700" x-text="job.platform"></td>
+                  <td class="px-4 py-2">
+                    <span :class="{
+                      'bg-blue-100 text-blue-700': job.status === 'running',
+                      'bg-yellow-100 text-yellow-700': job.status === 'scheduled',
+                      'bg-green-100 text-green-700': job.status === 'succeeded',
+                      'bg-red-100 text-red-700': job.status === 'failed_terminal',
+                      'bg-orange-100 text-orange-700': job.status === 'failed_retryable',
+                      'bg-gray-100 text-gray-600': job.status === 'skipped',
+                    }" class="px-2 py-0.5 rounded-full text-[11px] font-medium" x-text="job.status"></span>
+                  </td>
+                  <td class="px-4 py-2 text-gray-500" x-text="job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString() : '-'"></td>
+                  <td class="px-4 py-2 text-gray-500" x-text="job.attempts"></td>
+                  <td class="px-4 py-2 text-red-500 max-w-xs truncate" x-text="job.last_error || ''"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ VIEW: Brand Profile ═══════════════════════════════════════ -->
+    <div x-show="view === 'brand'" x-cloak>
+      <div class="max-w-2xl mx-auto bg-white rounded-xl border shadow-sm p-6 space-y-5">
+        <h3 class="font-semibold text-gray-800">品牌資料庫</h3>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">品牌主名稱 *</label>
+          <input x-model="brandForm.name" type="text" class="w-full border rounded-lg px-3 py-2 text-sm outline-none">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">品牌別名（逗號分隔）</label>
+          <input x-model="brandForm.nameVariants" type="text" placeholder="別名1, 別名2" class="w-full border rounded-lg px-3 py-2 text-sm outline-none">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">目標 URL（每行: URL 標籤）</label>
+          <textarea x-model="brandForm.targetUrls" rows="4" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none" placeholder="https://example.com home&#10;https://example.com/product product:main"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">身份暴露禁用詞（每行一條，至少 5 條）</label>
+          <textarea x-model="brandForm.blocklist" rows="5" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none" placeholder="我们&#10;官方&#10;我方&#10;本公司&#10;内部"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">錨詞禁用詞（每行一條）</label>
+          <textarea x-model="brandForm.anchorBlocklist" rows="3" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none" placeholder="click here&#10;read more"></textarea>
+        </div>
+
+        <div x-show="brandSaveMsg" :class="brandSaveMsg?.startsWith('✓') ? 'text-green-600' : 'text-red-600'" class="text-sm" x-text="brandSaveMsg"></div>
+
+        <button @click="saveBrand()" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium text-sm hover:bg-blue-700">保存設定</button>
+      </div>
+    </div>
+
+    <!-- ══ VIEW: History ═════════════════════════════════════════════ -->
+    <div x-show="view === 'history'" x-cloak class="space-y-4">
+      <div x-show="historyItems.length === 0" class="text-center py-16 text-gray-400">暫無記錄</div>
+      <template x-for="item in historyItems" :key="item.id">
+        <div class="bg-white rounded-xl border shadow-sm p-4">
+          <div class="flex justify-between items-start mb-2">
+            <h4 class="font-semibold text-gray-800 text-sm" x-text="item.title"></h4>
+            <span class="text-[10px] text-gray-400" x-text="new Date(item.created_at).toLocaleString()"></span>
+          </div>
+          <div class="text-[11px] text-gray-500 mb-3 truncate" x-text="item.original_url"></div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="r in JSON.parse(item.results || '[]')" :key="r.platform">
+              <a :href="r.publishedUrl || '#'" target="_blank"
+                 :class="r.success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'"
+                 class="text-[11px] px-2 py-0.5 rounded border" x-text="r.platform"></a>
+            </template>
           </div>
         </div>
-      </section>
-
-      <!-- VIEW: Brand -->
-      <section id="view-brand" class="view-content hidden space-y-6">
-        <div class="bg-white p-6 rounded-xl border">
-          <form id="brand-form" class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium mb-1">品牌主名稱 *</label>
-              <input id="brand-name" type="text" required class="w-full border rounded-md px-3 py-2 outline-none">
-            </div>
-            <div>
-              <label class="block text-sm font-medium mb-1">目標 URL 清單 (每行: URL 標籤)</label>
-              <textarea id="brand-target-urls" rows="5" class="w-full border rounded-md px-3 py-2 text-sm font-mono"></textarea>
-            </div>
-            <button type="submit" class="bg-blue-600 text-white px-8 py-2 rounded-md">保存設定</button>
-          </form>
-        </div>
-      </section>
-
-      <!-- VIEW: History -->
-      <section id="view-history" class="view-content hidden space-y-4">
-        <div id="history-list" class="space-y-4"></div>
-      </section>
-
-      <!-- VIEW: Settings -->
-      <section id="view-settings" class="view-content hidden">
-        <div id="settings-form" class="bg-white p-6 rounded-xl border grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-sm"></div>
-      </section>
-
+      </template>
     </div>
-  </main>
 
-  <script>
-    const $ = (id) => document.getElementById(id);
+    <!-- ══ VIEW: Settings ════════════════════════════════════════════ -->
+    <div x-show="view === 'settings'" x-cloak>
+      <div class="max-w-2xl mx-auto bg-white rounded-xl border shadow-sm p-6">
+        <h3 class="font-semibold text-gray-800 mb-4">系統設定</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <template x-for="[k, v] in settingsEntries" :key="k">
+            <div class="p-3 border rounded-lg font-mono text-xs">
+              <div class="text-gray-500 mb-0.5" x-text="k"></div>
+              <div class="text-gray-800 truncate" x-text="v || '(未設置)'"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
 
-    function showView(viewId) {
-      document.querySelectorAll('.view-content').forEach(v => v.classList.add('hidden'));
-      document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-      $(`view-${viewId}`).classList.remove('hidden');
-      $(`nav-${viewId}`).classList.add('active');
-      if (viewId === 'brand') loadBrandProfile();
-      if (viewId === 'history') loadHistory();
-      if (viewId === 'settings') loadSettings();
-      if (viewId === 'publish') loadPlatforms();
-    }
+  </div><!-- /overflow-y-auto -->
+</main>
 
-    function updatePreview() {
-      const content = $('editContent').value || '';
-      $('preview').innerHTML = content ? marked.parse(content) : '<p class="text-gray-400">尚未輸入內容...</p>';
-    }
+<script>
+function syndicatorApp() {
+  return {
+    // ── Navigation ─────────────────────────────────────
+    view: 'publish',
+    phase: 'input', // 'input' | 'preview'
+    navItems: [
+      { id: 'publish', icon: '✍️', label: '文章發佈' },
+      { id: 'queue',   icon: '📋', label: '佇列狀態' },
+      { id: 'brand',   icon: '🏷️', label: '品牌資料庫' },
+      { id: 'history', icon: '📂', label: '發佈歷史' },
+      { id: 'settings',icon: '⚙️', label: '系統設置' },
+    ],
 
-    async function loadPlatforms() {
+    get currentTitle() {
+      if (this.view === 'publish') return this.phase === 'input' ? '文章發佈' : `7 平台預覽 — ${this.batchId || ''}`;
+      return this.navItems.find(n => n.id === this.view)?.label ?? '';
+    },
+
+    // ── Brand ──────────────────────────────────────────
+    brandReady: false,
+    brandProfile: null,
+    brandForm: { name: '', nameVariants: '', targetUrls: '', blocklist: '', anchorBlocklist: '' },
+    brandSaveMsg: '',
+
+    // ── Input phase ────────────────────────────────────
+    draft: '',
+    draftTitle: '',
+    targetUrlOverride: '',
+    draftCharCount: 0,
+    generating: false,
+    generatingStep: '',
+    generateError: '',
+
+    // ── Preview phase ──────────────────────────────────
+    batchId: null,
+    variants: [],
+    lintResult: null,
+    activeTab: 0,
+    skippedPlatforms: new Set(),
+    regenLoading: -1,
+    dispatching: false,
+
+    get lintHasBatchViolation() {
+      return !!this.lintResult?.batchViolation;
+    },
+    get lintHasVariantViolations() {
+      return Object.keys(this.lintResult?.variantViolations || {}).length > 0;
+    },
+    get canDispatch() {
+      if (this.lintHasBatchViolation) return false;
+      return this.variants.some(v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform));
+    },
+    get activeVariantCount() {
+      return this.variants.filter(v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform)).length;
+    },
+
+    // ── Queue ──────────────────────────────────────────
+    queueJobs: [],
+    queueTimer: null,
+    get pendingCount() {
+      return this.queueJobs.filter(j => ['scheduled', 'running', 'failed_retryable'].includes(j.status)).length;
+    },
+
+    // ── History / Settings ─────────────────────────────
+    historyItems: [],
+    settingsEntries: [],
+
+    // ── Lifecycle ──────────────────────────────────────
+    async init() {
+      await this.loadBrandProfile();
+      this.switchView('publish');
+    },
+
+    switchView(id) {
+      this.view = id;
+      if (id === 'queue')   { this.loadQueue(); this.startQueuePolling(); } else { this.stopQueuePolling(); }
+      if (id === 'history') this.loadHistory();
+      if (id === 'settings')this.loadSettings();
+      if (id === 'brand')   this.loadBrandForm();
+    },
+
+    // ── Generate ───────────────────────────────────────
+    async generate() {
+      this.generating = true;
+      this.generateError = '';
+      this.generatingStep = '正在生成變體...';
       try {
-        const res = await fetch('/api/platforms');
-        const data = await res.json();
-        $('platforms-list').innerHTML = data.platforms.map(p => {
-          const connected = p.connected ? 'border-green-500 bg-green-50' : 'border-gray-200 opacity-50';
-          const checked = data.defaults.includes(p.name) ? 'checked' : '';
-          return `<label class="flex items-center gap-2 border px-2 py-1 rounded text-xs cursor-pointer ${connected}"><input type="checkbox" name="platforms" value="${p.name}" ${checked}> ${p.name}</label>`;
-        }).join('');
-      } catch (e) {}
-    }
-
-    $('scrapeBtn').onclick = async () => {
-      const url = $('sourceUrl').value.trim();
-      if (!url) return alert('請輸入 URL');
-      $('scrapeBtn').disabled = true;
-      $('scrapeBtn').textContent = '處理中...';
-      try {
-        const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        $('editTitle').value = data.title;
-        $('editContent').value = data.content;
-        $('editTags').value = (data.tags || []).join(', ');
-        $('editExcerpt').value = data.excerpt || '';
-        updatePreview();
-      } catch (e) { alert('生成失敗: ' + e.message); }
-      finally { $('scrapeBtn').disabled = false; $('scrapeBtn').textContent = '抓取並重寫'; }
-    };
-
-    $('finalPublishBtn').onclick = async () => {
-      const title = $('editTitle').value.trim();
-      const content = $('editContent').value.trim();
-      const platforms = Array.from(document.querySelectorAll('input[name="platforms"]:checked')).map(i => i.value);
-      if (!title || !content || platforms.length === 0) return alert('請完整填寫並選擇平台');
-
-      $('finalPublishBtn').disabled = true;
-      $('finalPublishBtn').textContent = '啟動中...';
-      
-      try {
-        const res = await fetch('/api/publish', { 
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ 
-            title, content, platforms, 
-            tags: $('editTags').value.split(',').filter(Boolean),
-            excerpt: $('editExcerpt').value,
-            publishStatus: document.querySelector('input[name="pubStatus"]:checked').value,
-            url: $('sourceUrl').value || 'manual' 
-          }) 
+        const body = { draft: this.draft, title: this.draftTitle || undefined };
+        if (this.targetUrlOverride) body.target_url_override = this.targetUrlOverride;
+        const res = await fetch('/api/v2/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
         });
-        const result = await res.json();
-        if (result.success && result.batchId) { showView('history'); trackBatchProgress(result.batchId); }
-        else { alert('啟動失敗: ' + (result.error || '未知錯誤')); }
-      } catch (e) { alert('網絡錯誤: ' + e.message); }
-      finally { $('finalPublishBtn').disabled = false; $('finalPublishBtn').textContent = '立即分發發佈'; }
-    };
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '生成失敗');
+        this.batchId = data.batchId;
+        this.variants = data.variants;
+        this.lintResult = data.lintResult;
+        this.skippedPlatforms = new Set();
+        this.activeTab = 0;
+        this.phase = 'preview';
+      } catch (e) {
+        this.generateError = e.message;
+      } finally {
+        this.generating = false;
+        this.generatingStep = '';
+      }
+    },
 
-    const activeTrackers = new Set();
-    function trackBatchProgress(batchId) {
-      if (activeTrackers.has(batchId)) return;
-      activeTrackers.add(batchId);
-      const interval = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/batch-status/${batchId}`);
-          const data = await res.json();
-          updateHistoryItemUI(batchId, data);
-          if (data.isFinished) { clearInterval(interval); activeTrackers.delete(batchId); loadHistory(); }
-        } catch (e) { clearInterval(interval); activeTrackers.delete(batchId); }
-      }, 3000);
-    }
+    // ── Regenerate single tab ──────────────────────────
+    async regenerateTab(idx) {
+      const platform = this.variants[idx]?.platform;
+      if (!platform) return;
+      this.regenLoading = idx;
+      try {
+        const res = await fetch('/api/v2/regenerate-variant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: this.batchId, platform, draft: this.draft }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        this.variants[idx] = data.variant;
+        // Re-run lint with updated variants
+        // (simplified: just clear batch violation hint)
+        if (this.lintResult?.variantViolations) {
+          delete this.lintResult.variantViolations[platform];
+        }
+      } catch (e) {
+        alert(`重新生成失敗: ${e.message}`);
+      } finally {
+        this.regenLoading = -1;
+      }
+    },
 
-    function updateHistoryItemUI(batchId, data) {
-      const itemEl = document.querySelector(`[data-batch="${batchId}"]`);
-      if (!itemEl) return;
-      const bar = itemEl.querySelector('.progress-bar');
-      if (bar) bar.style.width = `${data.percent}%`;
-      const text = itemEl.querySelector('.progress-text');
-      if (text) text.textContent = data.isFinished ? '分發完成' : `進度: ${data.completed}/${data.total}`;
-    }
+    toggleSkip(idx) {
+      const platform = this.variants[idx]?.platform;
+      if (!platform) return;
+      if (this.skippedPlatforms.has(platform)) {
+        this.skippedPlatforms.delete(platform);
+      } else {
+        this.skippedPlatforms.add(platform);
+      }
+      // trigger reactivity
+      this.skippedPlatforms = new Set(this.skippedPlatforms);
+    },
 
-    async function loadBrandProfile() {
+    // ── Dispatch ───────────────────────────────────────
+    async dispatch() {
+      this.dispatching = true;
+      try {
+        const activeVariants = this.variants.filter(
+          v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform)
+        );
+        const res = await fetch('/api/v2/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: this.batchId, variants: activeVariants }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        // Show queue
+        this.switchView('queue');
+        this.phase = 'input';
+        this.draft = '';
+        this.draftTitle = '';
+        this.draftCharCount = 0;
+      } catch (e) {
+        alert(`發佈失敗: ${e.message}`);
+      } finally {
+        this.dispatching = false;
+      }
+    },
+
+    // ── Queue polling ──────────────────────────────────
+    async loadQueue() {
+      try {
+        const res = await fetch('/api/v2/queue');
+        const data = await res.json();
+        this.queueJobs = data.jobs;
+      } catch (e) {}
+    },
+    startQueuePolling() {
+      this.stopQueuePolling();
+      this.queueTimer = setInterval(() => this.loadQueue(), 5000);
+    },
+    stopQueuePolling() {
+      if (this.queueTimer) { clearInterval(this.queueTimer); this.queueTimer = null; }
+    },
+
+    // ── Brand ──────────────────────────────────────────
+    async loadBrandProfile() {
       try {
         const res = await fetch('/api/v2/brand-profile');
         const data = await res.json();
-        const badge = $('top-dispatch-badge');
-        badge.className = `px-3 py-1 rounded-full text-xs font-medium block ${data.dispatchReady ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`;
-        badge.textContent = data.dispatchReady ? '✓ 品牌資料已就緒' : '⚠ 品牌資料不完整';
-        if (data.profile) {
-          $('brand-name').value = data.profile.name;
-          $('brand-target-urls').value = (data.profile.target_urls || []).map(t => `${t.url} ${t.context_tag}`).join('\n');
-        }
+        this.brandReady = data.dispatchReady;
+        this.brandProfile = data.profile;
       } catch (e) {}
-    }
-
-    $('brand-form').onsubmit = async (e) => {
-      e.preventDefault();
-      const payload = {
-        name: $('brand-name').value.trim(),
-        target_urls: $('brand-target-urls').value.split('\n').filter(Boolean).map(line => {
-          const [url, ...tags] = line.trim().split(/\s+/);
-          return { url, context_tag: tags.join(' ') };
-        }),
-        exposure_blocklist: [], name_variants: [], anchor_blocklist: []
+    },
+    loadBrandForm() {
+      const p = this.brandProfile;
+      if (!p) return;
+      this.brandForm = {
+        name: p.name || '',
+        nameVariants: (p.name_variants || []).join(', '),
+        targetUrls: (p.target_urls || []).map(t => `${t.url} ${t.context_tag}`).join('\n'),
+        blocklist: (p.exposure_blocklist || []).join('\n'),
+        anchorBlocklist: (p.anchor_blocklist || []).join('\n'),
       };
-      const res = await fetch('/api/v2/brand-profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (res.ok) { alert('保存成功'); loadBrandProfile(); }
-    };
+    },
+    async saveBrand() {
+      this.brandSaveMsg = '';
+      const payload = {
+        name: this.brandForm.name.trim(),
+        name_variants: this.brandForm.nameVariants.split(',').map(s => s.trim()).filter(Boolean),
+        target_urls: this.brandForm.targetUrls.split('\n').filter(Boolean).map(line => {
+          const [url, ...tags] = line.trim().split(/\s+/);
+          return { url, context_tag: tags.join(' ') || 'home' };
+        }),
+        exposure_blocklist: this.brandForm.blocklist.split('\n').map(s => s.trim()).filter(Boolean),
+        anchor_blocklist: this.brandForm.anchorBlocklist.split('\n').map(s => s.trim()).filter(Boolean),
+      };
+      try {
+        const res = await fetch('/api/v2/brand-profile', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        this.brandSaveMsg = '✓ 保存成功';
+        await this.loadBrandProfile();
+      } catch (e) {
+        this.brandSaveMsg = `✗ 保存失敗: ${e.message}`;
+      }
+    },
 
-    async function loadHistory() {
+    // ── History ────────────────────────────────────────
+    async loadHistory() {
       try {
         const res = await fetch('/api/history');
-        const data = await res.json();
-        if (data.length === 0) { $('history-list').innerHTML = '<div class="text-center py-10 text-gray-400">暫無記錄</div>'; return; }
-        $('history-list').innerHTML = data.map(item => `
-          <div class="bg-white p-4 rounded-lg shadow-sm border" data-batch="${item.batch_id || ''}">
-            <div class="flex justify-between items-start mb-2">
-              <h4 class="font-bold text-gray-800">${item.title}</h4>
-              <span class="text-[10px] text-gray-400">${new Date(item.created_at).toLocaleString()}</span>
-            </div>
-            <div class="text-[10px] text-gray-500 mb-3 truncate">${item.original_url}</div>
-            ${item.batch_id ? `<div class="mb-2"><div class="w-full bg-gray-100 rounded-full h-1"><div class="progress-bar bg-blue-500 h-1 rounded-full w-0"></div></div><div class="progress-text text-[9px] text-blue-500 mt-1">同步中...</div></div>` : ''}
-            <div class="flex flex-wrap gap-2">
-              ${JSON.parse(item.results || '[]').map(r => `<a href="${r.publishedUrl || '#'}" target="_blank" class="text-[10px] px-2 py-0.5 rounded border ${r.success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}">${r.platform}</a>`).join('')}
-            </div>
-          </div>
-        `).join('');
-        data.forEach(item => { if (item.batch_id) trackBatchProgress(item.batch_id); });
+        this.historyItems = await res.json();
       } catch (e) {}
-    }
+    },
 
-    async function loadSettings() {
+    // ── Settings ───────────────────────────────────────
+    async loadSettings() {
       try {
         const res = await fetch('/api/settings');
         const data = await res.json();
-        let html = '';
-        for (const [key, val] of Object.entries(data)) {
-          if (key !== 'AUTH_STATUS') html += `<div class="p-2 border rounded"><strong>${key}:</strong> <span class="text-gray-500">${val}</span></div>`;
-        }
-        $('settings-form').innerHTML = html;
+        this.settingsEntries = Object.entries(data).filter(([k]) => k !== 'AUTH_STATUS');
       } catch (e) {}
-    }
-
-    window.onload = () => showView('publish');
-  </script>
+    },
+  };
+}
+</script>
 </body>
 </html>
