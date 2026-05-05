@@ -12,104 +12,12 @@ import { db, savePost } from '../db';
 import { publishJobs } from '../db/repositories';
 import { asyncRoute, syncRoute } from './_helpers';
 import { resolveTargetPlatforms } from './admin';
+import { publishToPlatforms as publishService } from '../services/publish-service';
 
 export const router = express.Router();
 
 const upload = multer({ dest: path.join(process.cwd(), '.data', 'uploads') });
 
-async function publishToPlatforms(options: {
-  sourceUrl: string;
-  title: string;
-  content: string;
-  tags?: string[];
-  excerpt?: string;
-  platforms?: unknown;
-  publishStatus?: 'draft' | 'public';
-}) {
-  const targetPlatforms = resolveTargetPlatforms(options.platforms);
-  const adapters = allAdapters.filter(a => targetPlatforms.includes(a.name));
-
-  if (adapters.length === 0) {
-    throw new Error('No connected or valid platforms available. Connect at least one channel in Settings first.');
-  }
-
-  const results: any[] = [];
-  logger.info(`API: Starting publishing process to ${adapters.map(a => a.name).join(', ')}...`);
-
-  const publishStatus = options.publishStatus === 'public' ? 'public' : 'draft';
-  const apiAdapters = adapters.filter(a => !a.isBrowserAutomation);
-  const browserAdapters = adapters.filter(a => a.isBrowserAutomation);
-
-  if (apiAdapters.length > 0) {
-    logger.info(`API: Publishing concurrently to ${apiAdapters.length} API platforms...`);
-    const apiPromises = apiAdapters.map(async (adapter) => {
-      try {
-        const result = await adapter.publish({
-          title: options.title,
-          markdownContent: options.content,
-          tags: options.tags,
-          excerpt: options.excerpt,
-          originalUrl: options.sourceUrl,
-          publishStatus
-        });
-        if (result.success) {
-          logger.success(`[${adapter.name}] Published! URL: ${result.publishedUrl}`);
-        } else {
-          logger.error(`[${adapter.name}] Failed: ${result.error}`);
-        }
-        return result;
-      } catch (error: any) {
-        logger.error(`[${adapter.name}] Unexpected Error`, error);
-        return { platform: adapter.name, success: false, error: error.message };
-      }
-    });
-    const apiResults = await Promise.all(apiPromises);
-    results.push(...apiResults);
-  }
-
-  if (browserAdapters.length > 0) {
-    logger.info(`API: Publishing sequentially to ${browserAdapters.length} Browser platforms...`);
-    for (let i = 0; i < browserAdapters.length; i++) {
-      const adapter = browserAdapters[i];
-      logger.info(`Publishing to ${adapter.name}...`);
-
-      try {
-        const result = await adapter.publish({
-          title: options.title,
-          markdownContent: options.content,
-          tags: options.tags,
-          excerpt: options.excerpt,
-          originalUrl: options.sourceUrl,
-          publishStatus
-        });
-        results.push(result);
-
-        if (result.success) {
-          logger.success(`[${adapter.name}] Published! URL: ${result.publishedUrl}`);
-        } else {
-          logger.error(`[${adapter.name}] Failed: ${result.error}`);
-        }
-      } catch (error: any) {
-        logger.error(`[${adapter.name}] Unexpected Error`, error);
-        results.push({ platform: adapter.name, success: false, error: error.message });
-      }
-
-      if (i < browserAdapters.length - 1) {
-        const sleepTime = Math.floor(Math.random() * (15000 - 5000 + 1)) + 5000;
-        logger.info(`Sleeping for ${sleepTime}ms before next browser platform...`);
-        await randomSleep(sleepTime, sleepTime);
-      }
-    }
-  }
-
-  logger.info('API: Syncing results to Google Sheets...');
-  await appendToSheet(options.sourceUrl, options.title, results);
-
-  logger.info('API: Saving post to local database...');
-  savePost(options.sourceUrl, options.title, options.content, results);
-
-  return { targetPlatforms, results };
-}
 
 async function runPublishingTask(batchId: string, options: any) {
   const jobs = db.prepare(
@@ -174,7 +82,7 @@ async function processBulkQueue(urls: string[], targetPlatforms: string[], publi
       const { title, content, tags, excerpt } = await generateMarkdown(scrapedData);
 
       logger.info(`[Bulk ${i+1}/${urls.length}] Publishing and saving results...`);
-      await publishToPlatforms({
+      await publishService({
         sourceUrl: url,
         title,
         content,
@@ -328,7 +236,7 @@ router.post('/api/auto-publish', async (req, res) => {
       generated = await generateMarkdown(scrapedData);
     }
 
-    const { targetPlatforms, results } = await publishToPlatforms({
+    const { targetPlatforms, results } = await publishService({
       sourceUrl,
       title: generated.title,
       content: generated.content,
