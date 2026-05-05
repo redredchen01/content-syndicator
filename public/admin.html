@@ -295,50 +295,7 @@
   $('reset-btn').addEventListener('click', load);
   load();
 
-  // Platform Management
-  async function loadPlatforms() {
-    try {
-      const res = await fetch('/api/platforms');
-      const data = await res.json();
-      const container = $('platforms-list');
-      const platformSelect = $('platform-select');
-
-      container.innerHTML = data.platforms.map(p => {
-        const statusColor = p.connected ? 'text-green-600' : 'text-red-600';
-        const statusText = p.connected ? '已连接' : p.reason;
-        const isDefault = data.defaults.includes(p.name);
-
-        return `
-          <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
-            <div class="flex-1">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="font-medium text-sm">${p.name}</span>
-                <span class="text-xs px-2 py-1 rounded ${p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
-                  ${statusText}
-                </span>
-                ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
-              </div>
-              ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
-              ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
-            </div>
-            <button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
-                    onclick="openApiKeyForm('${p.id}', '${p.name}')">
-              ${p.connected ? '更新' : '连接'}
-            </button>
-          </div>
-        `;
-      }).join('');
-
-      // Populate platform select
-      platformSelect.innerHTML = '<option value="">-- 选择平台 --</option>' +
-        data.platforms.filter(p => !p.browserAutomation).map(p => `
-          <option value="${p.id}">${p.name}</option>
-        `).join('');
-    } catch (err) {
-      console.error('Failed to load platforms:', err);
-    }
-  }
-
+  // Platform Management helper functions
   function openApiKeyForm(platformId, platformName) {
     $('platform-select').value = platformId;
     $('api-key-input').value = '';
@@ -380,7 +337,8 @@
         statusEl.className = 'text-xs text-green-600 mt-1';
         setTimeout(() => {
           closeApiKeyForm();
-          loadPlatforms();
+          platformsCacheTime = 0;
+          loadPlatformsWithCaching();
         }, 1000);
       } else {
         statusEl.textContent = `✗ ${data.error || '验证失败'}`;
@@ -392,8 +350,81 @@
     }
   });
 
-  loadPlatforms();
-  setInterval(loadPlatforms, 30000); // Reload platforms every 30 seconds
+  let platformsCacheTime = 0;
+  let platformsCache = null;
+  let platformsLoadInProgress = false;
+
+  async function loadPlatformsWithCache() {
+    const now = Date.now();
+    // Use cache if less than 10 seconds old
+    if (platformsCache && now - platformsCacheTime < 10000) {
+      return platformsCache;
+    }
+
+    // Prevent duplicate requests
+    if (platformsLoadInProgress) return;
+
+    platformsLoadInProgress = true;
+    try {
+      const res = await fetch('/api/platforms');
+      platformsCache = await res.json();
+      platformsCacheTime = now;
+      platformsLoadInProgress = false;
+      return platformsCache;
+    } catch (err) {
+      platformsLoadInProgress = false;
+      throw err;
+    }
+  }
+
+  async function loadPlatformsWithCaching() {
+    try {
+      const data = await loadPlatformsWithCache();
+      const container = $('platforms-list');
+      const platformSelect = $('platform-select');
+
+      container.innerHTML = data.platforms.map(p => {
+        const statusColor = p.connected ? 'text-green-600' : 'text-red-600';
+        const statusText = p.connected ? '已连接' : p.reason;
+        const isDefault = data.defaults.includes(p.name);
+
+        return `
+          <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-sm">${p.name}</span>
+                <span class="text-xs px-2 py-1 rounded ${p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
+                  ${statusText}
+                </span>
+                ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
+              </div>
+              ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
+              ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
+            </div>
+            <button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                    onclick="openApiKeyForm('${p.id}', '${p.name}')">
+              ${p.connected ? '更新' : '连接'}
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      // Populate platform select
+      platformSelect.innerHTML = '<option value="">-- 选择平台 --</option>' +
+        data.platforms.filter(p => !p.browserAutomation).map(p => `
+          <option value="${p.id}">${p.name}</option>
+        `).join('');
+    } catch (err) {
+      console.error('Failed to load platforms:', err);
+    }
+  }
+
+  loadPlatformsWithCaching();
+  setInterval(() => {
+    // Clear cache every 30 seconds to fetch fresh data
+    platformsCacheTime = 0;
+    loadPlatformsWithCaching();
+  }, 30000);
 </script>
 </body>
 </html>

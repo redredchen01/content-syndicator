@@ -393,3 +393,94 @@ router.get('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => 
     });
   }
 }));
+
+// GET /api/diagnostics/setup-status — quick setup status check
+router.get('/api/diagnostics/setup-status', syncRoute((req, res) => {
+  try {
+    const profile = getProfile(db);
+    const dispatch = isReadyForDispatch(db);
+    const platforms = allAdapters.map(a => ({
+      name: a.name,
+      connected: isAdapterConnected(a),
+    }));
+
+    const connectedPlatforms = platforms.filter(p => p.connected).length;
+    const totalPlatforms = platforms.length;
+
+    res.json({
+      profileConfigured: Boolean(profile),
+      dispatchReady: dispatch.ready,
+      connectedPlatforms,
+      totalPlatforms,
+      issues: dispatch.report.errors.map(e => e.message),
+    });
+  } catch (error: any) {
+    logger.error('[Diagnostics] Setup status check failed', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Setup status check failed',
+    });
+  }
+}));
+
+// POST /api/platforms/batch-validate — validate multiple API keys in parallel
+router.post('/api/platforms/batch-validate', async (req, res) => {
+  try {
+    const { credentials } = req.body ?? {};
+    if (!Array.isArray(credentials)) {
+      return res.status(400).json({ error: 'credentials must be an array' });
+    }
+
+    const results = await Promise.all(
+      credentials.map(async (cred: any) => {
+        const platformId = cred.platformId as string;
+        const apiKey = cred.apiKey as string;
+
+        if (typeof platformId !== 'string' || typeof apiKey !== 'string') {
+          return { platformId, ok: false, error: 'Invalid input' };
+        }
+
+        const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
+        if (!adapter || adapter.isBrowserAutomation) {
+          return { platformId, ok: false, error: 'Platform not found or is browser automation' };
+        }
+
+        logger.info(`[Admin] Testing API key for ${adapter.name}...`);
+        const originalEnv = { ...process.env };
+
+        const envKeyMap: Record<string, string> = {
+          'devto': 'DEVTO_API_KEY',
+          'medium': 'MEDIUM_INTEGRATION_TOKEN',
+          'hashnode': 'HASHNODE_TOKEN',
+          'github': 'GITHUB_TOKEN',
+          'blogger': 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+          'wordpress': 'WORDPRESS_SITE_URL',
+          'telegraph': 'TELEGRA_PH_TOKEN',
+        };
+
+        const envVar = envKeyMap[platformId];
+        if (!envVar) {
+          return { platformId, ok: false, error: 'Cannot validate this platform type' };
+        }
+
+        process.env[envVar] = apiKey;
+        const testResult = await adapter.testConnection();
+        process.env = originalEnv;
+
+        return {
+          platformId,
+          ok: testResult.ok,
+          error: testResult.error,
+        };
+      }),
+    );
+
+    res.json({ results });
+  } catch (error: any) {
+    logger.error('[Admin] Batch validation failed', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Batch validation failed',
+    });
+  }
+});

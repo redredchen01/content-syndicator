@@ -171,6 +171,7 @@
   let currentStep = 1;
   const platforms = ['Dev.to', 'Medium', 'Hashnode', 'GitHub', 'Blogger', 'WordPress', 'Telegra.ph'];
   const apiKeysMap = {};
+  const validationInProgress = new Set();
 
   // Initialize
   window.addEventListener('DOMContentLoaded', async () => {
@@ -231,16 +232,20 @@
       </div>
     `).join('');
 
-    // Auto-validate on blur
+    // Auto-validate on blur with deduplication
     container.querySelectorAll('input').forEach(input => {
       input.addEventListener('blur', async (e) => {
         const platform = e.target.dataset.platform;
         const key = e.target.value.trim();
         if (!key) return;
 
+        // Skip if validation already in progress for this platform
+        if (validationInProgress.has(platform)) return;
+
         const statusEl = container.querySelector(`[data-status="${platform}"]`);
         statusEl.textContent = '验证中...';
         statusEl.className = 'text-xs text-slate-500';
+        validationInProgress.add(platform);
 
         try {
           const platformId = platform.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -263,6 +268,8 @@
         } catch (err) {
           statusEl.textContent = `✗ 网络错误`;
           statusEl.className = 'text-xs text-red-600';
+        } finally {
+          validationInProgress.delete(platform);
         }
       });
     });
@@ -317,6 +324,9 @@
         return;
       }
     }
+
+    // Clear any error messages when transitioning steps
+    document.getElementById('status-message').classList.add('hidden');
 
     currentStep = step;
     renderStep(step);

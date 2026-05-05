@@ -74,25 +74,44 @@ export async function validateAllCredentials(db: Database.Database): Promise<Cre
       } catch (e) {}
     }
 
-    for (const [platformId, encryptedKey] of Object.entries(apiKeys)) {
-      const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
-      if (!adapter || adapter.isBrowserAutomation) continue;
+    // Parallel validation with concurrency limit (3 at a time)
+    const entries = Object.entries(apiKeys);
+    const concurrency = 3;
 
-      const testResult = await testSingleCredential(adapter, encryptedKey);
+    for (let i = 0; i < entries.length; i += concurrency) {
+      const batch = entries.slice(i, i + concurrency);
+      const batchPromises = batch.map(async ([platformId, encryptedKey]) => {
+        const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
+        if (!adapter || adapter.isBrowserAutomation) return null;
 
-      results.push({
-        platformId,
-        platform: adapter.name,
-        ok: testResult.ok,
-        error: testResult.error,
-        tested_at: now,
+        const testResult = await testSingleCredential(adapter, encryptedKey);
+
+        return {
+          platformId,
+          platform: adapter.name,
+          ok: testResult.ok,
+          error: testResult.error,
+          tested_at: now,
+          adapter,
+        };
       });
 
-      testStatus[platformId] = {
-        connected_at: testStatus[platformId]?.connected_at ?? now,
-        last_test_error: testResult.ok ? null : testResult.error,
-        test_timestamp: now,
-      };
+      const batchResults = await Promise.all(batchPromises);
+      for (const result of batchResults) {
+        if (!result) continue;
+        results.push({
+          platformId: result.platformId,
+          platform: result.platform,
+          ok: result.ok,
+          error: result.error,
+          tested_at: result.tested_at,
+        });
+        testStatus[result.platformId] = {
+          connected_at: testStatus[result.platformId]?.connected_at ?? now,
+          last_test_error: result.ok ? null : result.error,
+          test_timestamp: now,
+        };
+      }
     }
 
     if (Object.keys(apiKeys).length > 0) {

@@ -46,12 +46,14 @@ async function runCredentialValidation() {
   }
 }
 
-// Run initial validation immediately, then every 24 hours
-runCredentialValidation().catch(e => logger.error('[Credential Validator] Initial run failed', e));
-credentialValidationInterval = setInterval(
-  () => runCredentialValidation().catch(e => logger.error('[Credential Validator] Task failed', e)),
-  24 * 60 * 60 * 1000,
-);
+// Delay initial validation by 10 seconds to not block startup, then every 24 hours
+setTimeout(() => {
+  runCredentialValidation().catch(e => logger.error('[Credential Validator] Initial run failed', e));
+  credentialValidationInterval = setInterval(
+    () => runCredentialValidation().catch(e => logger.error('[Credential Validator] Task failed', e)),
+    24 * 60 * 60 * 1000,
+  );
+}, 10000);
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Web UI is running at: http://localhost:${PORT}\n`);

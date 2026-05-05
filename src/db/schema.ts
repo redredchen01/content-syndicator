@@ -212,4 +212,16 @@ export function applyV2Schema(db: Database.Database): void {
   // Add Unit 4 columns for onboarding tracking
   addColumnIfMissing(db, 'brand_profiles', 'onboarding_completed_at', 'DATETIME');
   addColumnIfMissing(db, 'brand_profiles', 'preferred_platforms_json', "TEXT DEFAULT '[]'");
+
+  // Optimize publish_jobs queries with composite index for common dispatch patterns
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_publish_jobs_status_type
+      ON publish_jobs(status, job_type, scheduled_at)
+  `);
+
+  // Optimize anchor_history queries for recent batches lookups
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_anchor_history_batch_used
+      ON anchor_history(batch_id, used_at DESC)
+  `);
 }
