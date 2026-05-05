@@ -40,12 +40,14 @@ export async function handleAggregateSheets(_job: PublishJob, _db: Database.Data
 export async function handleReconciliation(_job: PublishJob, db: Database.Database): Promise<void> {
   logger.info('[SheetsJobs] reconciliation: syncing SQLite → Sheets...');
   try {
-    // Collect all succeeded publish_jobs that have a result recorded in posts
+    // Collect succeeded publish_jobs that have a platform post URL in posts
     const rows = db.prepare(`
       SELECT pj.batch_id, pj.platform,
-             p.original_url AS published_url
+             p.published_url
       FROM publish_jobs pj
-      LEFT JOIN posts p ON p.batch_id = pj.batch_id AND p.original_url IS NOT NULL
+      LEFT JOIN posts p ON p.batch_id = pj.batch_id
+                       AND p.platform = pj.platform
+                       AND p.published_url IS NOT NULL
       WHERE pj.status = 'succeeded' AND pj.job_type = 'publish'
       ORDER BY pj.updated_at DESC
       LIMIT 500
