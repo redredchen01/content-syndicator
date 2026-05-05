@@ -36,3 +36,4 @@ server*.log
 
 # Snapshot artifacts
 .data/schema-snapshot.sql
+.data/syndicator.db
