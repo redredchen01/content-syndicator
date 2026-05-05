@@ -22,27 +22,20 @@ export { getAdapterId, hasSavedBrowserSession };
 
 export const router = express.Router();
 
-function isAdapterConnected(adapter: PlatformAdapter) {
-  if (adapter.isBrowserAutomation) return isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter);
+// Data-driven connectivity check — add new platforms here only
+const API_CONNECTED: Record<string, () => boolean> = {
+  'Telegra.ph': () => true,
+  'Dev.to':     () => Boolean(process.env.DEVTO_API_KEY),
+  'Medium':     () => Boolean(process.env.MEDIUM_INTEGRATION_TOKEN),
+  'Hashnode':   () => Boolean(process.env.HASHNODE_TOKEN && process.env.HASHNODE_PUBLICATION_ID),
+  'GitHub':     () => Boolean(process.env.GITHUB_TOKEN),
+  'Blogger':    () => Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && process.env.BLOGGER_BLOG_ID),
+  'WordPress':  () => Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD),
+};
 
-  switch (adapter.name) {
-    case 'Telegra.ph':
-      return true;
-    case 'Dev.to':
-      return Boolean(process.env.DEVTO_API_KEY);
-    case 'Medium':
-      return Boolean(process.env.MEDIUM_INTEGRATION_TOKEN);
-    case 'Hashnode':
-      return Boolean(process.env.HASHNODE_TOKEN && process.env.HASHNODE_PUBLICATION_ID);
-    case 'GitHub':
-      return Boolean(process.env.GITHUB_TOKEN);
-    case 'Blogger':
-      return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && process.env.BLOGGER_BLOG_ID);
-    case 'WordPress':
-      return Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD);
-    default:
-      return false;
-  }
+function isAdapterConnected(adapter: PlatformAdapter): boolean {
+  if (adapter.isBrowserAutomation) return isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter);
+  return API_CONNECTED[adapter.name]?.() ?? false;
 }
 
 function isDefaultPublishTarget(adapter: PlatformAdapter) {

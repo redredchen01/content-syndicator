@@ -157,111 +157,67 @@ router.get('/api/batch-status/:batchId', syncRoute((req, res) => {
   });
 }));
 
-router.post('/api/publish', async (req, res) => {
+router.post('/api/publish', asyncRoute(async (req, res) => {
+  const { url, title, content, tags, excerpt, platforms, publishStatus } = req.body;
+  logger.info(`API Request: /api/publish - Title: ${title}, Platforms: ${JSON.stringify(platforms)}`);
+
+  if (!title || !content) return res.status(400).json({ error: 'Missing required fields: title or content' });
+
+  const sourceUrl = url || 'manual-content';
+  const targetPlatforms = resolveTargetPlatforms(platforms);
+  if (targetPlatforms.length === 0) return res.status(400).json({ error: 'No connected or valid platforms available.' });
+
+  const batchId = `batch_${Date.now()}`;
+  logger.info(`Creating batch ${batchId} for ${targetPlatforms.length} platforms...`);
+
+  const insertJob = db.prepare(`
+    INSERT INTO publish_jobs (batch_id, variant_id, platform, job_type, status, scheduled_at, payload_json)
+    VALUES (?, 'v1', ?, 'publish', 'scheduled', CURRENT_TIMESTAMP, '{}')
+  `);
   try {
-    const { url, title, content, tags, excerpt, platforms, publishStatus } = req.body;
-    logger.info(`API Request: /api/publish - Title: ${title}, Platforms: ${JSON.stringify(platforms)}`);
-
-    if (!title || !content) {
-      logger.warn('Publish failed: Missing title or content');
-      return res.status(400).json({ error: 'Missing required fields: title or content' });
-    }
-
-    const sourceUrl = url || 'manual-content';
-    const targetPlatforms = resolveTargetPlatforms(platforms);
-    const batchId = `batch_${Date.now()}`;
-
-    if (targetPlatforms.length === 0) {
-      logger.warn('Publish failed: No platforms resolved');
-      return res.status(400).json({ error: 'No connected or valid platforms available.' });
-    }
-
-    logger.info(`Creating batch ${batchId} for ${targetPlatforms.length} platforms...`);
-
-    const insertJob = db.prepare(`
-      INSERT INTO publish_jobs (batch_id, variant_id, platform, job_type, status, scheduled_at, payload_json)
-      VALUES (?, 'v1', ?, 'publish', 'scheduled', CURRENT_TIMESTAMP, '{}')
-    `);
-
-    try {
-      const transaction = db.transaction((pforms) => {
-        for (const p of pforms) {
-          insertJob.run(batchId, p);
-        }
-      });
-      transaction(targetPlatforms);
-    } catch (dbErr: any) {
-      logger.error('Database insertion failed during publish', dbErr);
-      return res.status(500).json({ error: `Database Error: ${dbErr.message}` });
-    }
-
-    runPublishingTask(batchId, {
-      sourceUrl, title, content, tags, excerpt, publishStatus: publishStatus || 'draft'
-    }).catch(e => logger.error(`Background task for ${batchId} failed early`, e));
-
-    logger.success(`Batch ${batchId} started successfully.`);
-    res.json({ success: true, batchId, message: 'Publishing task started in background' });
-  } catch (error: any) {
-    logger.error('API /api/publish Critical Error', error);
-    res.status(500).json({ error: error.message || 'Internal Server Error' });
+    db.transaction((pforms: string[]) => { for (const p of pforms) insertJob.run(batchId, p); })(targetPlatforms);
+  } catch (dbErr: any) {
+    return res.status(500).json({ error: `Database Error: ${dbErr.message}` });
   }
-});
 
-router.post('/api/auto-publish', async (req, res) => {
-  try {
-    const { mode, url, rawContent, originalUrl, platforms, publishStatus } = req.body;
-    const normalizedStatus = publishStatus === 'public' ? 'public' : 'draft';
+  runPublishingTask(batchId, { sourceUrl, title, content, tags, excerpt, publishStatus: publishStatus || 'draft' })
+    .catch(e => logger.error(`Background task for ${batchId} failed early`, e));
 
-    let sourceUrl = '';
-    let generated;
+  logger.success(`Batch ${batchId} started.`);
+  res.json({ success: true, batchId, message: 'Publishing task started in background' });
+}));
 
-    if (mode === 'manual') {
-      if (!rawContent) return res.status(400).json({ error: 'rawContent is required for manual auto-publish' });
+router.post('/api/auto-publish', asyncRoute(async (req, res) => {
+  const { mode, url, rawContent, originalUrl, platforms, publishStatus } = req.body;
+  const normalizedStatus: 'draft' | 'public' = publishStatus === 'public' ? 'public' : 'draft';
 
-      sourceUrl = originalUrl || 'manual-content';
-      logger.info('API: Auto-publish manual content. Generating markdown...');
-      generated = await generateMarkdown({
-        title: 'Manual Content',
-        content: rawContent,
-        originalUrl: sourceUrl
-      });
-    } else {
-      if (!url) return res.status(400).json({ error: 'url is required for URL auto-publish' });
+  let sourceUrl: string;
+  let generated;
 
-      sourceUrl = url;
-      logger.info(`API: Auto-publish URL. Starting scrape for URL: ${url}`);
-      const scrapedData = await scrapeUrl(url);
-
-      logger.info('API: Auto-publish URL. Generating markdown...');
-      generated = await generateMarkdown(scrapedData);
-    }
-
-    const { targetPlatforms, results } = await publishService({
-      sourceUrl,
-      title: generated.title,
-      content: generated.content,
-      tags: generated.tags,
-      excerpt: generated.excerpt,
-      platforms,
-      publishStatus: normalizedStatus
-    });
-
-    res.json({
-      success: true,
-      mode: mode === 'manual' ? 'manual' : 'url',
-      platforms: targetPlatforms,
-      title: generated.title,
-      content: generated.content,
-      tags: generated.tags,
-      excerpt: generated.excerpt,
-      originalUrl: sourceUrl,
-      results
-    });
-  } catch (error: any) {
-    logger.error('API /api/auto-publish Error', error);
-    res.status(500).json({ error: error.message });
+  if (mode === 'manual') {
+    if (!rawContent) return res.status(400).json({ error: 'rawContent is required for manual auto-publish' });
+    sourceUrl = originalUrl || 'manual-content';
+    logger.info('API: Auto-publish manual content. Generating markdown...');
+    generated = await generateMarkdown({ title: 'Manual Content', content: rawContent, originalUrl: sourceUrl });
+  } else {
+    if (!url) return res.status(400).json({ error: 'url is required for URL auto-publish' });
+    sourceUrl = url;
+    logger.info(`API: Auto-publish URL. Scraping: ${url}`);
+    generated = await generateMarkdown(await scrapeUrl(url));
   }
-});
+
+  const { targetPlatforms, results } = await publishService({
+    sourceUrl, title: generated.title, content: generated.content,
+    tags: generated.tags, excerpt: generated.excerpt, platforms, publishStatus: normalizedStatus,
+  });
+
+  res.json({
+    success: true, mode: mode === 'manual' ? 'manual' : 'url',
+    platforms: targetPlatforms, originalUrl: sourceUrl,
+    title: generated.title, content: generated.content,
+    tags: generated.tags, excerpt: generated.excerpt, results,
+  });
+}));
 
 router.post('/api/bulk-publish', upload.single('file'), (req, res) => {
   try {

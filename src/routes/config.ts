@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { resetLLMClients } from '../llm/client';
 import { getRawPrompts, saveRawPrompts } from '../llm';
 import { allAdapters } from '../adapters/index';
-import { syncRoute } from './_helpers';
+import { syncRoute, asyncRoute } from './_helpers';
 import {
   AUTH_DIR,
   getBrowserAuthMode,
@@ -91,52 +91,43 @@ router.post('/api/settings', syncRoute((req, res) => {
   res.json({ success: true, message: 'Settings saved' });
 }));
 
-router.get('/api/models', async (req, res) => {
-  try {
-    const models: { id: string, name: string, provider: string }[] = [];
+router.get('/api/models', asyncRoute(async (_, res) => {
+  const models: { id: string; name: string; provider: string }[] = [];
 
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
-        if (response.ok) {
-          const data = await response.json();
-          data.models?.forEach((m: any) => {
-            if (m.supportedGenerationMethods?.includes('generateContent') && m.name.includes('gemini')) {
-              models.push({ id: m.name.replace('models/', ''), name: m.displayName, provider: 'Gemini' });
-            }
-          });
-        }
-      } catch (e) { logger.warn('Failed to fetch Gemini models'); }
-    }
-
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        const response = await fetch('https://api.openai.com/v1/models', {
-          headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` }
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`);
+      if (r.ok) {
+        const data = await r.json();
+        data.models?.forEach((m: any) => {
+          if (m.supportedGenerationMethods?.includes('generateContent') && m.name.includes('gemini')) {
+            models.push({ id: m.name.replace('models/', ''), name: m.displayName, provider: 'Gemini' });
+          }
         });
-        if (response.ok) {
-          const data = await response.json();
-          const chatModels = data.data?.filter((m: any) => m.id.startsWith('gpt-4') || m.id.startsWith('gpt-3.5') || m.id.startsWith('o1') || m.id.startsWith('o3'));
-          chatModels?.forEach((m: any) => {
-            models.push({ id: m.id, name: m.id, provider: 'OpenAI' });
-          });
-        }
-      } catch (e) { logger.warn('Failed to fetch OpenAI models'); }
-    }
-
-    let recommended = '';
-    if (models.find(m => m.id === 'gemini-1.5-flash')) recommended = 'gemini-1.5-flash';
-    else if (models.find(m => m.id === 'gpt-4o-mini')) recommended = 'gpt-4o-mini';
-    else if (models.find(m => m.id === 'gemini-1.5-pro')) recommended = 'gemini-1.5-pro';
-    else if (models.find(m => m.id === 'gpt-4o')) recommended = 'gpt-4o';
-    else if (models.length > 0) recommended = models[0].id;
-
-    res.json({ models, recommended, selected: process.env.SELECTED_MODEL || recommended });
-  } catch (error: any) {
-    logger.error('API /api/models Error', error);
-    res.status(500).json({ error: error.message });
+      }
+    } catch { logger.warn('Failed to fetch Gemini models'); }
   }
-});
+
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const r = await fetch('https://api.openai.com/v1/models', {
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      });
+      if (r.ok) {
+        const data = await r.json();
+        data.data
+          ?.filter((m: any) => ['gpt-4', 'gpt-3.5', 'o1', 'o3'].some(p => m.id.startsWith(p)))
+          .forEach((m: any) => models.push({ id: m.id, name: m.id, provider: 'OpenAI' }));
+      }
+    } catch { logger.warn('Failed to fetch OpenAI models'); }
+  }
+
+  const PREFERRED = ['gemini-1.5-flash', 'gpt-4o-mini', 'gemini-1.5-pro', 'gpt-4o'];
+  const recommended =
+    PREFERRED.find(id => models.some(m => m.id === id)) ?? models[0]?.id ?? '';
+
+  res.json({ models, recommended, selected: process.env.SELECTED_MODEL || recommended });
+}));
 
 router.get('/api/prompts', syncRoute((_, res) => res.json(getRawPrompts())));
 
