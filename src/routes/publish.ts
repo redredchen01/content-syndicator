@@ -277,42 +277,75 @@ router.post('/api/v2/generate', asyncRoute(async (req, res) => {
   const { draft, title, target_url_override } = req.body;
   if (!draft) return res.status(400).json({ error: 'draft is required' });
 
+  logger.info('routes.publish.generate.start', {
+    draftLength: draft.length,
+    hasTitle: !!title,
+    hasOverride: !!target_url_override,
+  });
+
   const brand = getProfile(db);
-  if (!brand) return res.status(400).json({ error: 'Brand profile not configured' });
+  if (!brand) {
+    logger.error('routes.publish.generate.error', { reason: 'Brand profile not configured' });
+    return res.status(400).json({ error: 'Brand profile not configured' });
+  }
 
-  // Step 1: Generate 7 variant bodies (concurrency=3)
-  const { batchId, variants } = await generateVariants({ draft, title, target_url_override, brand }, db);
+  try {
+    // Step 1: Generate 7 variant bodies (concurrency=3)
+    logger.debug('routes.publish.generate.variants_start', { draftLength: draft.length });
+    const { batchId, variants } = await generateVariants({ draft, title, target_url_override, brand }, db);
+    logger.debug('routes.publish.generate.variants_done', { batchId, variantCount: variants.length });
 
-  // Step 2: Attach anchor words (concurrency=3)
-  const recentTopAnchors = anchorHistory.topInRecentBatches(db, 30, 10).map(r => r.anchor);
-  const withAnchors = await attachAnchors(variants, brand, recentTopAnchors, db);
+    // Step 2: Attach anchor words (concurrency=3)
+    logger.debug('routes.publish.generate.anchors_start', { variantCount: variants.length });
+    const recentTopAnchors = anchorHistory.topInRecentBatches(db, 30, 10).map(r => r.anchor);
+    const withAnchors = await attachAnchors(variants, brand, recentTopAnchors, db);
+    logger.debug('routes.publish.generate.anchors_done', { anchorCount: withAnchors.length });
 
-  // Step 3: Run lint gate
-  const lintResult = runLint(withAnchors, brand);
+    // Step 3: Run lint gate
+    logger.debug('routes.publish.generate.lint_start', { variantCount: withAnchors.length });
+    const lintResult = runLint(withAnchors, brand);
+    logger.debug('routes.publish.generate.lint_done', { passed: lintResult.passed });
 
-  res.json({ batchId, variants: withAnchors, lintResult });
+    logger.info('routes.publish.generate.success', { batchId, variantCount: withAnchors.length });
+    res.json({ batchId, variants: withAnchors, lintResult });
+  } catch (err: any) {
+    logger.error('routes.publish.generate.failed', { message: err.message });
+    throw err;
+  }
 }));
 
 router.post('/api/v2/dispatch', asyncRoute(async (req, res) => {
   const { batchId, variants } = req.body;
   if (!batchId || !Array.isArray(variants)) {
+    logger.error('routes.publish.dispatch.error', { reason: 'Missing batchId or variants' });
     return res.status(400).json({ error: 'batchId and variants[] are required' });
   }
 
-  dispatchVariantJobs(variants, batchId, db);
+  logger.info('routes.publish.dispatch.start', { batchId, variantCount: variants.length });
 
-  const jobs = publishJobs.byBatch(db, batchId);
-  res.json({ batchId, jobsCreated: jobs.length });
+  try {
+    dispatchVariantJobs(variants, batchId, db);
+    const jobs = publishJobs.byBatch(db, batchId);
+    logger.info('routes.publish.dispatch.success', { batchId, jobsCreated: jobs.length });
+    res.json({ batchId, jobsCreated: jobs.length });
+  } catch (err: any) {
+    logger.error('routes.publish.dispatch.failed', { batchId, message: err.message });
+    throw err;
+  }
 }));
 
 // GET /api/v2/queue — for queue status page (polled every 5s)
 router.get('/api/v2/queue', syncRoute((req, res) => {
   const { batchId } = req.query;
+  logger.debug('routes.publish.queue.fetch', { batchId: batchId || 'all' });
+
   const jobs = batchId
     ? publishJobs.byBatch(db, String(batchId))
     : (db.prepare(
         `SELECT * FROM publish_jobs ORDER BY created_at DESC LIMIT 200`,
       ).all() as import('../db/repositories').PublishJob[]);
+
+  logger.debug('routes.publish.queue.fetched', { jobCount: jobs.length });
   res.json({ jobs });
 }));
 
