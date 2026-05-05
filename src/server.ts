@@ -5,6 +5,7 @@ import { router as configRouter } from './routes/config';
 import { router as adminRouter } from './routes/admin';
 import { router as publishRouter } from './routes/publish';
 import { router as historyRouter } from './routes/history';
+import metricsRouter from './routes/metrics';
 
 export const app = express();
 app.use(cors());
@@ -21,3 +22,4 @@ app.use(configRouter);
 app.use(adminRouter);
 app.use(publishRouter);
 app.use(historyRouter);
+app.use('/api', metricsRouter);
