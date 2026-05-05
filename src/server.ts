@@ -18,6 +18,11 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), version });
 });
 
+// Dashboard route
+app.get('/dashboard', (_req, res) => {
+  res.sendFile(path.join(__dirname, '../public/dashboard.html'));
+});
+
 app.use(configRouter);
 app.use(adminRouter);
 app.use(publishRouter);
