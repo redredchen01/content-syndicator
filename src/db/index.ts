@@ -69,12 +69,13 @@ export function savePost(
   title: string,
   content: string,
   results: unknown[],
+  batchId?: string,
 ): void {
   try {
     const stmt = db.prepare(
-      'INSERT INTO posts (original_url, title, content, results_json) VALUES (?, ?, ?, ?)',
+      'INSERT INTO posts (original_url, title, content, results_json, batch_id) VALUES (?, ?, ?, ?, ?)',
     );
-    stmt.run(originalUrl, title, content, JSON.stringify(results));
+    stmt.run(originalUrl, title, content, JSON.stringify(results), batchId ?? null);
     logger.success?.('Post saved to local SQLite database.');
   } catch (error) {
     logger.error('Failed to save post to local database', error);
