@@ -8,7 +8,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "start": "tsx src/index.ts",
-    "preflight": "tsx scripts/preflight-check.ts"
+    "preflight": "tsx scripts/preflight-check.ts",
+    "check:deps": "tsx scripts/check-circular-deps.ts"
   },
   "keywords": [],
   "author": "",
