@@ -94,7 +94,7 @@ function makeJob(variant: Variant, overrides: Partial<PublishJob> = {}): Publish
   };
 }
 
-const mockAdapter = allAdapters[0] as { publish: ReturnType<typeof vi.fn> };
+const mockAdapter = allAdapters[0] as unknown as { publish: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
   vi.clearAllMocks();
