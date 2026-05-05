@@ -13,6 +13,8 @@ import { publishJobs } from '../db/repositories';
 import { asyncRoute, syncRoute } from './_helpers';
 import { resolveTargetPlatforms } from './admin';
 import { publishToPlatforms as publishService } from '../services/publish-service';
+import { getPlatformDelay, getExponentialBackoffDelay, sleep } from '../utils/platform-delay-config';
+import { systemMonitor } from '../utils/systemMonitor';
 
 export const router = express.Router();
 
@@ -53,7 +55,10 @@ async function runPublishingTask(batchId: string, options: any) {
       publishJobs.markFailed(db, job.id, err.message, null, 2);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 5000));
+    // Platform-adapted delay instead of fixed delay
+    const delayMs = getPlatformDelay(job.platform);
+    systemMonitor.recordOperation(`publish.delay.${job.platform}`, delayMs, true);
+    await sleep(delayMs);
   }
 
   const finalJobs = publishJobs.byBatch(db, batchId);
@@ -98,9 +103,11 @@ async function processBulkQueue(urls: string[], targetPlatforms: string[], publi
     }
 
     if (i < urls.length - 1) {
-      const sleepTime = Math.floor(Math.random() * (60000 - 30000 + 1)) + 30000;
-      logger.info(`[Bulk] Sleeping for ${sleepTime/1000}s before next article...`);
-      await randomSleep(sleepTime, sleepTime);
+      // Exponential backoff for batch processing: 30s × 1.2^iteration (max 60s)
+      const delayMs = getExponentialBackoffDelay(i, 30000, 1.2, 60000);
+      logger.info(`[Bulk] Sleeping for ${(delayMs/1000).toFixed(1)}s before next article...`);
+      systemMonitor.recordOperation('publish.batch.delay', delayMs, true);
+      await sleep(delayMs);
     }
   }
   logger.success('Bulk queue processing completed entirely.');
