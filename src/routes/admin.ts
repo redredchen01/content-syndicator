@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { PlatformAdapter } from '../adapters/base';
 import { allAdapters } from '../adapters/index';
 import { db } from '../db';
-import { getProfile, saveProfile, isReadyForDispatch } from '../services/brand-profile';
+import { getProfile, saveProfile, isReadyForDispatch, updatePreferredPlatforms, getPreferredPlatforms } from '../services/brand-profile';
 import { runPrecheck } from '../services/anchor-monitor';
 import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
@@ -349,3 +349,47 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
     });
   }
 });
+
+// PATCH /api/v2/brand-profile/preferred-platforms — update preferred publishing platforms
+router.patch('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
+  try {
+    const { platforms } = req.body ?? {};
+
+    if (!Array.isArray(platforms)) {
+      return res.status(400).json({ error: 'platforms must be an array' });
+    }
+
+    const result = updatePreferredPlatforms(db, platforms);
+    if (!result.ok) {
+      return res.status(422).json({ error: result.error });
+    }
+
+    const preferred = getPreferredPlatforms(db);
+    logger.info(`[Admin] Updated preferred platforms: ${preferred.join(', ')}`);
+
+    res.json({
+      ok: true,
+      preferredPlatforms: preferred,
+    });
+  } catch (error: any) {
+    logger.error('[Admin] Failed to update preferred platforms', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Failed to update preferred platforms',
+    });
+  }
+}));
+
+// GET /api/v2/brand-profile/preferred-platforms — get current preferred platforms
+router.get('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
+  try {
+    const preferred = getPreferredPlatforms(db);
+    res.json({ preferredPlatforms: preferred });
+  } catch (error: any) {
+    logger.error('[Admin] Failed to get preferred platforms', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Failed to get preferred platforms',
+    });
+  }
+}));

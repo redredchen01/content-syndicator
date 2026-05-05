@@ -6,6 +6,8 @@ import { handlePublishJob } from './services/queue/publish-worker';
 import { handleLivenessJob } from './services/queue/liveness-worker';
 import { handleDailyDigestJob, seedDailyDigest } from './services/queue/digest-job';
 import { handleAggregateSheets, handleReconciliation, seedSheetsJobs } from './services/queue/sheets-jobs';
+import { validateAllCredentials } from './services/credential-validator';
+import { logger } from './utils/logger';
 
 const PORT = process.env.PORT || 3000;
 
@@ -24,6 +26,32 @@ scheduler.start();
 seedDailyDigest(db);
 // Seed today's Sheets maintenance jobs (aggregate 04:00, reconcile 04:30)
 seedSheetsJobs(db);
+
+// Background credential validation task (runs every 24 hours)
+let credentialValidationInterval: ReturnType<typeof setInterval> | null = null;
+async function runCredentialValidation() {
+  try {
+    const results = await validateAllCredentials(db);
+    if (results.length > 0) {
+      const successes = results.filter(r => r.ok).length;
+      const failures = results.filter(r => !r.ok).length;
+      if (failures > 0) {
+        logger.warn(`[Credential Validator] ${successes} OK, ${failures} FAILED`);
+      } else {
+        logger.info(`[Credential Validator] All ${successes} credentials valid`);
+      }
+    }
+  } catch (err: any) {
+    logger.error('[Credential Validator] Task failed', err);
+  }
+}
+
+// Run initial validation immediately, then every 24 hours
+runCredentialValidation().catch(e => logger.error('[Credential Validator] Initial run failed', e));
+credentialValidationInterval = setInterval(
+  () => runCredentialValidation().catch(e => logger.error('[Credential Validator] Task failed', e)),
+  24 * 60 * 60 * 1000,
+);
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Web UI is running at: http://localhost:${PORT}\n`);

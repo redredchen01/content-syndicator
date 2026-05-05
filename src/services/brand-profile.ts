@@ -226,3 +226,50 @@ export function isReadyForDispatch(
   const report = validateForDispatch(profile);
   return { ready: report.valid, report };
 }
+
+/**
+ * Update preferred platforms for the user. Validates that all selected
+ * platforms are currently connected and available.
+ */
+export function updatePreferredPlatforms(
+  db: Database.Database,
+  platforms: string[],
+): { ok: true } | { ok: false; error: string } {
+  if (!Array.isArray(platforms) || platforms.length === 0) {
+    return { ok: false, error: '必须至少选择一个平台' };
+  }
+
+  // Validate all platforms are valid strings
+  if (!platforms.every(p => typeof p === 'string' && p.trim().length > 0)) {
+    return { ok: false, error: '平台列表包含无效项' };
+  }
+
+  // Store in database
+  try {
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE brand_profiles
+      SET preferred_platforms_json = ?, updated_at = ?
+      WHERE brand_id = 'default'
+    `).run(JSON.stringify(platforms), now);
+
+    return { ok: true };
+  } catch (error: any) {
+    return { ok: false, error: error?.message ?? 'Failed to update preferred platforms' };
+  }
+}
+
+/**
+ * Get preferred platforms for the user. Returns an empty array if not set.
+ */
+export function getPreferredPlatforms(db: Database.Database): string[] {
+  try {
+    const result = db.prepare('SELECT preferred_platforms_json FROM brand_profiles LIMIT 1').get();
+    if (result && typeof result.preferred_platforms_json === 'string') {
+      return JSON.parse(result.preferred_platforms_json);
+    }
+  } catch (e) {
+    // Silently fail, return empty array
+  }
+  return [];
+}

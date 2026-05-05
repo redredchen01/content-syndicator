@@ -126,6 +126,43 @@
   </form>
 
   <div id="dispatch-status" class="mt-6 px-4 py-3 rounded-lg text-sm hidden"></div>
+
+  <!-- Platform Management Section -->
+  <div class="mt-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+    <h2 class="text-lg font-semibold mb-4">发布平台管理</h2>
+
+    <!-- Platform Status List -->
+    <div id="platforms-list" class="space-y-3 mb-6">
+      <!-- Dynamically populated -->
+    </div>
+
+    <!-- Quick Add API Key Form -->
+    <div id="api-key-form-container" class="hidden mt-6 pt-6 border-t border-slate-200">
+      <h3 class="font-medium text-sm mb-3">快速添加 API 密钥</h3>
+      <form id="quick-add-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-2" for="platform-select">选择平台</label>
+          <select id="platform-select" class="w-full border border-slate-300 rounded-md px-3 py-2" required>
+            <option value="">-- 选择平台 --</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-2" for="api-key-input">API 密钥</label>
+          <input id="api-key-input" type="password" placeholder="粘贴 API 密钥或 token"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" required />
+          <div id="api-key-status" class="text-xs mt-1"></div>
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button type="button" class="px-4 py-2 border border-slate-300 rounded-md hover:bg-slate-50" onclick="closeApiKeyForm()">
+            取消
+          </button>
+          <button type="submit" id="save-key-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+            保存密钥
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -257,6 +294,106 @@
 
   $('reset-btn').addEventListener('click', load);
   load();
+
+  // Platform Management
+  async function loadPlatforms() {
+    try {
+      const res = await fetch('/api/platforms');
+      const data = await res.json();
+      const container = $('platforms-list');
+      const platformSelect = $('platform-select');
+
+      container.innerHTML = data.platforms.map(p => {
+        const statusColor = p.connected ? 'text-green-600' : 'text-red-600';
+        const statusText = p.connected ? '已连接' : p.reason;
+        const isDefault = data.defaults.includes(p.name);
+
+        return `
+          <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-sm">${p.name}</span>
+                <span class="text-xs px-2 py-1 rounded ${p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
+                  ${statusText}
+                </span>
+                ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
+              </div>
+              ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
+              ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
+            </div>
+            <button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                    onclick="openApiKeyForm('${p.id}', '${p.name}')">
+              ${p.connected ? '更新' : '连接'}
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      // Populate platform select
+      platformSelect.innerHTML = '<option value="">-- 选择平台 --</option>' +
+        data.platforms.filter(p => !p.browserAutomation).map(p => `
+          <option value="${p.id}">${p.name}</option>
+        `).join('');
+    } catch (err) {
+      console.error('Failed to load platforms:', err);
+    }
+  }
+
+  function openApiKeyForm(platformId, platformName) {
+    $('platform-select').value = platformId;
+    $('api-key-input').value = '';
+    $('api-key-status').textContent = '';
+    $('api-key-form-container').classList.remove('hidden');
+  }
+
+  function closeApiKeyForm() {
+    $('api-key-form-container').classList.add('hidden');
+    $('api-key-input').value = '';
+    $('api-key-status').textContent = '';
+  }
+
+  $('quick-add-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const platformId = $('platform-select').value;
+    const apiKey = $('api-key-input').value.trim();
+    const statusEl = $('api-key-status');
+
+    if (!platformId || !apiKey) {
+      statusEl.textContent = '请填写所有字段';
+      statusEl.className = 'text-xs text-red-600 mt-1';
+      return;
+    }
+
+    statusEl.textContent = '验证中...';
+    statusEl.className = 'text-xs text-slate-500 mt-1';
+
+    try {
+      const res = await fetch(`/api/platforms/${platformId}/api-key`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        statusEl.textContent = '✓ 密钥已验证并保存';
+        statusEl.className = 'text-xs text-green-600 mt-1';
+        setTimeout(() => {
+          closeApiKeyForm();
+          loadPlatforms();
+        }, 1000);
+      } else {
+        statusEl.textContent = `✗ ${data.error || '验证失败'}`;
+        statusEl.className = 'text-xs text-red-600 mt-1';
+      }
+    } catch (err) {
+      statusEl.textContent = `✗ 网络错误：${err.message}`;
+      statusEl.className = 'text-xs text-red-600 mt-1';
+    }
+  });
+
+  loadPlatforms();
+  setInterval(loadPlatforms, 30000); // Reload platforms every 30 seconds
 </script>
 </body>
 </html>

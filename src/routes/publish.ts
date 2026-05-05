@@ -12,6 +12,7 @@ import { db, savePost } from '../db';
 import { publishJobs } from '../db/repositories';
 import { asyncRoute, syncRoute } from './_helpers';
 import { resolveTargetPlatforms } from './admin';
+import { getPreferredPlatforms } from '../services/brand-profile';
 import { publishToPlatforms as publishService } from '../services/publish-service';
 
 export const router = express.Router();
@@ -164,7 +165,16 @@ router.post('/api/publish', asyncRoute(async (req, res) => {
   if (!title || !content) return res.status(400).json({ error: 'Missing required fields: title or content' });
 
   const sourceUrl = url || 'manual-content';
-  const targetPlatforms = resolveTargetPlatforms(platforms);
+
+  // Use preferred platforms if available and no explicit platforms specified
+  let targetPlatforms: string[];
+  if (!platforms || (Array.isArray(platforms) && platforms.length === 0)) {
+    const preferred = getPreferredPlatforms(db);
+    targetPlatforms = preferred.length > 0 ? preferred : resolveTargetPlatforms(platforms);
+  } else {
+    targetPlatforms = resolveTargetPlatforms(platforms);
+  }
+
   if (targetPlatforms.length === 0) return res.status(400).json({ error: 'No connected or valid platforms available.' });
 
   const batchId = `batch_${Date.now()}`;
@@ -229,7 +239,13 @@ router.post('/api/bulk-publish', upload.single('file'), (req, res) => {
       if (typeof platforms === 'string') parsedPlatforms = JSON.parse(platforms);
     } catch(e) {}
 
-    const targetPlatforms = resolveTargetPlatforms(parsedPlatforms);
+    let targetPlatforms: string[];
+    if (!parsedPlatforms || (Array.isArray(parsedPlatforms) && parsedPlatforms.length === 0)) {
+      const preferred = getPreferredPlatforms(db);
+      targetPlatforms = preferred.length > 0 ? preferred : resolveTargetPlatforms(parsedPlatforms);
+    } else {
+      targetPlatforms = resolveTargetPlatforms(parsedPlatforms);
+    }
     if (targetPlatforms.length === 0) {
       return res.status(400).json({ error: 'No connected platforms available. Connect at least one channel in Settings first.' });
     }

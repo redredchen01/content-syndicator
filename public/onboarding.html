@@ -221,11 +221,13 @@
     const container = document.getElementById('api-channels');
     container.innerHTML = platforms.map(platform => `
       <div class="pb-4 border-b border-slate-200 last:border-0">
-        <label class="block text-sm font-medium mb-2">${platform}</label>
+        <div class="flex items-center justify-between mb-2">
+          <label class="block text-sm font-medium">${platform}</label>
+          <span class="text-xs text-slate-500" data-status="${platform}"></span>
+        </div>
         <input type="password" data-platform="${platform}"
                placeholder="粘贴 API 密钥或 token"
                class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300" />
-        <div class="text-xs text-slate-500 mt-1" data-status="${platform}"></div>
       </div>
     `).join('');
 
@@ -238,26 +240,29 @@
 
         const statusEl = container.querySelector(`[data-status="${platform}"]`);
         statusEl.textContent = '验证中...';
+        statusEl.className = 'text-xs text-slate-500';
 
         try {
-          const res = await fetch(`/api/auth/test-connection/${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`, {
-            method: 'POST',
+          const platformId = platform.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const res = await fetch(`/api/platforms/${platformId}/api-key`, {
+            method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ apiKey: key }),
           });
 
           if (res.ok) {
+            const data = await res.json();
             statusEl.textContent = '✓ 验证成功';
-            statusEl.className = 'text-xs text-green-600 mt-1';
+            statusEl.className = 'text-xs text-green-600';
             apiKeysMap[platform] = key;
           } else {
             const data = await res.json();
             statusEl.textContent = `✗ ${data.error || '验证失败'}`;
-            statusEl.className = 'text-xs text-red-600 mt-1';
+            statusEl.className = 'text-xs text-red-600';
           }
         } catch (err) {
           statusEl.textContent = `✗ 网络错误`;
-          statusEl.className = 'text-xs text-red-600 mt-1';
+          statusEl.className = 'text-xs text-red-600';
         }
       });
     });
