@@ -1,4 +1,5 @@
 import winston from 'winston';
+import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
 
@@ -34,20 +35,24 @@ const transports: winston.transport[] = [
   }),
 
   // Daily file rotation (all logs)
-  new winston.transports.File({
-    filename: path.join(logsDir, `${new Date().toISOString().split('T')[0]}.log`),
+  new DailyRotateFile({
+    dirname: logsDir,
+    filename: 'app-%DATE%.log',
+    datePattern: 'YYYY-MM-DD',
+    maxSize: '20m',
+    maxDays: '7d',
     format: dailyRotateFormat,
-    maxsize: 10485760, // 10MB
-    maxFiles: 14, // Keep 14 days of logs
   }),
 
-  // Error file (errors only)
-  new winston.transports.File({
-    filename: path.join(logsDir, 'error.log'),
+  // Error file with daily rotation (errors only)
+  new DailyRotateFile({
+    dirname: logsDir,
+    filename: 'error-%DATE%.log',
+    datePattern: 'YYYY-MM-DD',
     level: 'error',
+    maxSize: '20m',
+    maxDays: '7d',
     format: dailyRotateFormat,
-    maxsize: 10485760,
-    maxFiles: 14,
   }),
 ];
 
