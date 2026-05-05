@@ -23,8 +23,8 @@
 
   <!-- 自动配置区域 -->
   <div class="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-5">
-    <h2 class="text-base font-semibold text-blue-800 mb-1">⚡ 自动配置（Beta）</h2>
-    <p class="text-sm text-blue-700 mb-3">输入品牌官网地址，系统自动分析并填充下方表单，15-30 秒。预览后点击「保存」。</p>
+    <h2 class="text-base font-semibold text-blue-800 mb-1">⚡ 一键自动配置</h2>
+    <p class="text-sm text-blue-700 mb-3">输入品牌官网地址，系统自动分析、填充并保存，15-30 秒。完成后可继续调整细节。</p>
     <div class="flex gap-2">
       <input id="auto-url" type="url" placeholder="https://your-brand.com"
              class="flex-1 border border-blue-300 rounded-md px-3 py-2 text-sm" />
@@ -304,8 +304,21 @@
       $('jaccard_threshold').value = p.jaccard_threshold || 0.5;
       if (p.digest_channel) $('digest_channel').value = p.digest_channel;
 
+      // 自动保存到数据库
+      status.textContent = '保存中...';
+      const saveRes = await fetch('/api/v2/brand-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p),
+      });
+      const saveData = await saveRes.json();
+      if (!saveRes.ok) throw new Error(saveData.error || '保存失败');
+
+      // 更新 dispatch 状态
+      showDispatchStatus(saveData.dispatchReady, saveData.dispatchReport);
+
       const warningText = data.warnings?.length ? `\n⚠ ${data.warnings.join('；')}` : '';
-      status.textContent = `✓ 已自动填充（${data.source === 'fallback' ? '降级模式' : 'AI 分析'}）。预览无误后点击「保存」。${warningText}`;
+      status.textContent = `✓ 已自动配置并保存（${data.source === 'fallback' ? '降级模式' : 'AI 分析'}）。可继续调整细节后再保存。${warningText}`;
       status.className = 'mt-2 text-sm text-green-700';
     } catch (err) {
       status.textContent = '自动配置失败：' + err.message + '。请手动填写或重试。';

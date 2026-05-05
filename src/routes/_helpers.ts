@@ -36,11 +36,15 @@ export function syncRoute(fn: (req: Req, res: Res) => unknown) {
   return (req: Req, res: Res) => {
     const contextId = getOrCreateContextId(req);
     try {
-      // For sync routes, we can't use runWithContext since it's async
-      // Instead, create context directly
-      const { createRequestContext } = require('../utils/context');
-      createRequestContext(contextId);
-      fn(req, res);
+      // Import here to ensure module is loaded
+      const { createNamespace } = require('cls-hooked');
+      const ns = createNamespace('syndicator-context');
+
+      // Run sync function within namespace context
+      ns.run(() => {
+        ns.set('contextId', contextId);
+        fn(req, res);
+      });
     } catch (error: any) {
       logger.error('route.handler.error', {
         method: req.method,
