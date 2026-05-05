@@ -2,200 +2,282 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
-  <title>內容多渠道發佈</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多渠道外鏈分發系統 - 儀表板</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .nav-link.active { @apply bg-blue-50 text-blue-600 border-r-4 border-blue-600; }
+  </style>
 </head>
-<body class="bg-gray-50 text-gray-900">
-<div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
-  <!-- 简化后的顶部导航 -->
-  <div class="flex justify-between items-center mb-6">
-    <h1 class="text-2xl font-semibold text-gray-800">內容發佈面板</h1>
-    <div class="flex space-x-4">
-      <button id="navPublish" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">发布</button>
-      <button id="navHistory" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">历史</button>
-      <button id="navSettings" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">设置</button>
+<body class="bg-gray-100 min-h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white shadow-md flex-shrink-0 flex flex-col">
+    <div class="p-6 border-b">
+      <h1 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+        <i class="fas fa-robot text-blue-600"></i> Syndicator
+      </h1>
+      <p class="text-xs text-gray-500 mt-1">v0.2 第三方口吻分發</p>
     </div>
-  </div>
+    <nav class="flex-1 mt-4">
+      <a href="#" onclick="showView('publish')" id="nav-publish" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
+        <i class="fas fa-paper-plane w-5"></i> <span class="ml-3">文章發佈</span>
+      </a>
+      <a href="#" onclick="showView('brand')" id="nav-brand" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
+        <i class="fas fa-id-card w-5"></i> <span class="ml-3">品牌資料庫</span>
+      </a>
+      <a href="#" onclick="showView('history')" id="nav-history" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
+        <i class="fas fa-history w-5"></i> <span class="ml-3">發佈歷史</span>
+      </a>
+      <a href="#" onclick="showView('settings')" id="nav-settings" class="nav-link flex items-center px-6 py-3 text-gray-600 hover:bg-gray-50 transition-colors">
+        <i class="fas fa-cog w-5"></i> <span class="ml-3">系統設置</span>
+      </a>
+    </nav>
+  </aside>
 
-  <!-- 发布视图 -->
-  <div id="viewPublish" class="hidden">
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-      <div class="hidden lg:block flex justify-between items-start mb-2">
-        <span class="font-semibold text-blue-900">内容来源</span>
-        <select id="sourceType" class="border rounded p-2 w-full">
-          <option value="url">链接</option>
-          <option value="manual">手动输入</option>
-        </select>
-      </div>
+  <!-- Main -->
+  <main class="flex-1 flex flex-col min-w-0">
+    <header class="bg-white shadow-sm p-4 flex justify-between items-center">
+      <h2 id="view-title" class="text-lg font-semibold text-gray-700">文章發佈</h2>
+      <div id="top-dispatch-badge" class="hidden px-3 py-1 rounded-full text-xs font-medium"></div>
+    </header>
 
-      <!-- 文章标题 -->
-      <div class="space-y-2">
-        <label class="block font-medium text-gray-700">标题</label>
-        <input type="text" id="titleInput" class="border rounded p-2 w-full" />
-      </div>
-
-      <!-- Tags & 摘要 -->
-      <div class="grid grid-cols-2 gap-2">
-        <div>
-          <label class="block font-medium text-gray-700">标签 (最多 4)</label>
-          <input type="text" id="tagsInput" class="border rounded p-2 w-full" placeholder="ai,tech,news" />
+    <div class="flex-1 overflow-y-auto p-6">
+      
+      <!-- VIEW: Publish -->
+      <section id="view-publish" class="view-content hidden space-y-6">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div class="flex flex-col md:flex-row gap-4 mb-6">
+            <div class="flex-1">
+              <label class="block text-sm font-medium text-gray-700 mb-1">文章來源 URL</label>
+              <div class="flex gap-2">
+                <input type="text" id="sourceUrl" placeholder="https://..." class="flex-1 border rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="scrapeBtn" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">抓取並重寫</button>
+              </div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="space-y-4">
+              <input type="text" id="editTitle" placeholder="標題" class="w-full border rounded-md px-3 py-2 outline-none">
+              <textarea id="editContent" rows="12" placeholder="Markdown 正文..." class="w-full border rounded-md px-3 py-2 font-mono text-sm outline-none" oninput="updatePreview()"></textarea>
+              <div class="grid grid-cols-2 gap-4">
+                <input type="text" id="editTags" placeholder="標籤 (逗號分隔)" class="w-full border rounded-md px-3 py-2 outline-none">
+                <input type="text" id="editExcerpt" placeholder="摘要" class="w-full border rounded-md px-3 py-2 outline-none">
+              </div>
+            </div>
+            <div class="space-y-6">
+              <div id="preview" class="border rounded-md p-4 bg-gray-50 h-[350px] overflow-y-auto prose prose-sm max-w-none">预览区</div>
+              <div class="bg-blue-50 p-4 rounded-lg">
+                <div id="platforms-list" class="flex flex-wrap gap-2 mb-4"></div>
+                <div class="flex items-center justify-between">
+                  <div class="flex gap-4 text-sm">
+                    <label><input type="radio" name="pubStatus" value="draft" checked> 草稿</label>
+                    <label><input type="radio" name="pubStatus" value="public"> 公開</label>
+                  </div>
+                  <button id="finalPublishBtn" class="bg-green-600 text-white px-6 py-2 rounded-md font-bold hover:bg-green-700 shadow-md">立即分發發佈</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div>
-          <label class="block font-medium text-gray-700">SEO 摘要</label>
-          <input type="text" id="excerptInput" class="border rounded p-2 w-full" placeholder="简短的 1-2 句描述" />
+      </section>
+
+      <!-- VIEW: Brand -->
+      <section id="view-brand" class="view-content hidden space-y-6">
+        <div class="bg-white p-6 rounded-xl border">
+          <form id="brand-form" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium mb-1">品牌主名稱 *</label>
+              <input id="brand-name" type="text" required class="w-full border rounded-md px-3 py-2 outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">目標 URL 清單 (每行: URL 標籤)</label>
+              <textarea id="brand-target-urls" rows="5" class="w-full border rounded-md px-3 py-2 text-sm font-mono"></textarea>
+            </div>
+            <button type="submit" class="bg-blue-600 text-white px-8 py-2 rounded-md">保存設定</button>
+          </form>
         </div>
-      </div>
+      </section>
 
-      <!-- 内容输入 -->
-      <div class="mt-4 space-y-2">
-        <label class="block font-medium text-gray-700">正文编辑区</label>
-        <textarea id="contentInput" class="border rounded p-2 w-full h-[200px] focus:ring-2 focus:ring-blue-500" oninput="updatePreview()"></textarea>
-      </div>
+      <!-- VIEW: History -->
+      <section id="view-history" class="view-content hidden space-y-4">
+        <div id="history-list" class="space-y-4"></div>
+      </section>
 
-      <!-- 预览 -->
-      <div class="hidden lg:block mt-4">
-        <label class="block font-medium text-gray-700">实时预览</label>
-        <div id="markdownPreview" class="border rounded p-2 bg-gray-50 h-[200px] overflow-y-auto"></div>
-      </div>
+      <!-- VIEW: Settings -->
+      <section id="view-settings" class="view-content hidden">
+        <div id="settings-form" class="bg-white p-6 rounded-xl border grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-sm"></div>
+      </section>
+
     </div>
+  </main>
 
-    <!-- 发布目标平台选择 -->
-    <div class="mt-6 flex flex-wrap gap-2">
-      <span class="text-sm text-gray-600">目标平台：</span>
-      <div id="platformCheckboxes" class="flex flex-wrap gap-2">
-        <!-- 动态加载平台列表 -->
-      </div>
-      <div class="mt-2 flex items-center">
-        <label class="flex items-center space-x-2">
-          <input type="radio" name="publishStatus" value="draft" checked class="text-blue-600 focus:ring-blue-500" />
-          <span class="text-sm text-gray-700">保存为草稿</span>
-        </label>
-        <label class="flex items-center space-x-2">
-          <input type="radio" name="publishStatus" value="public" class="text-blue-600 focus:ring-blue-500" />
-          <span class="text-sm text-gray-700">公开发布</span>
-        </label>
-      </div>
-    </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
 
-    <!-- 行动按钮 -->
-    <div class="mt-6 flex space-x-3">
-      <button id="generateBtn" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 flex items-center justify-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.26-1.972L9 17.59V5a2 2 0 012-2h3.18L2 5c1.743 0 3.413.5 4.5 1.36V4a1 1 0 011-1h1a1 1 0 011 1v1c0 .552.448 1 .998 1h4.02c1.087 0 2 .5 2 1v1c0 .276.26.5.875.5L17 11.9v6a1 1 0 01-1 1h-1a1 1 0 01-1-1v-5c0-.276-.26-.5-.7-.5z" />
-        </svg>
-        生成内容
-      </button>
-      <button id="autoPublishBtn" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 flex items-center justify-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v2m0 8v2m9-9h-2M6 12h-2m14 0h-2M6 18h-2m14 0h-2M12 3v2m0 16v2m-9-8h2M6 12h2" />
-        </svg>
-        自动发布
-      </button>
-      <button id="addPromptBtn" class="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700 flex items-center justify-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 1.5A1.5 1.5 0 0110.5 10.5a1.5 1.5 0 010 3 1.5 1.5 0 01-3 0c0-.605.395-1.2 1-1.2s1 .595 1 1.2A1.5 1.5 0 019 13.5c0-.447-.112-.875-.293-1.272l3-2.64a1 1 0 010-1.41l-3-2.64c-.182-.5-.5-.5-1.1 0l-3 2.64c-.182.5-.368.95-.368 1.41 0 .425.112.853.368 1.272l3 2.64zm0 0l3 2.64M12 15a3 3 0 100-6 3 3 0 000 6z" />
-        </svg>
-        自定义提示词
-      </button>
-    </div>
-  </div>
+    function showView(viewId) {
+      document.querySelectorAll('.view-content').forEach(v => v.classList.add('hidden'));
+      document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+      $(`view-${viewId}`).classList.remove('hidden');
+      $(`nav-${viewId}`).classList.add('active');
+      if (viewId === 'brand') loadBrandProfile();
+      if (viewId === 'history') loadHistory();
+      if (viewId === 'settings') loadSettings();
+      if (viewId === 'publish') loadPlatforms();
+    }
 
-  <!-- 历史视图 -->
-  <div id="viewHistory" class="hidden mt-6">
-    <p class="text-gray-500 mb-4 italic">加载历史...</p>
-    <div id="historyContainer" class="space-y-4"></div>
-  </div>
+    function updatePreview() {
+      const content = $('editContent').value || '';
+      $('preview').innerHTML = content ? marked.parse(content) : '<p class="text-gray-400">尚未輸入內容...</p>';
+    }
 
-  <!-- 设置视图 -->
-  <div id="viewSettings" class="hidden mt-6">
-    <p class="text-gray-500 mb-4">加载设置...</p>
-    <div id="settingsContainer"></div>
-  </div>
+    async function loadPlatforms() {
+      try {
+        const res = await fetch('/api/platforms');
+        const data = await res.json();
+        $('platforms-list').innerHTML = data.platforms.map(p => {
+          const connected = p.connected ? 'border-green-500 bg-green-50' : 'border-gray-200 opacity-50';
+          const checked = data.defaults.includes(p.name) ? 'checked' : '';
+          return `<label class="flex items-center gap-2 border px-2 py-1 rounded text-xs cursor-pointer ${connected}"><input type="checkbox" name="platforms" value="${p.name}" ${checked}> ${p.name}</label>`;
+        }).join('');
+      } catch (e) {}
+    }
 
-  <!-- 提示词编辑视图 -->
-  <div id="viewPrompts" class="hidden mt-6">
-    <h2 class="text-lg font-semibold mb-2">自定义提示词</h2>
-    <textarea id="mainPromptInput" class="border rounded p-2 w-full h-[150px]"></textarea>
-    <textarea id="promoPromptInput" class="border rounded p-2 w-full h-[150px]"></textarea>
-    <button class="bg-blue-600 text-white px-4 py-2 rounded mt-2">保存</button>
-  </div>
+    $('scrapeBtn').onclick = async () => {
+      const url = $('sourceUrl').value.trim();
+      if (!url) return alert('請輸入 URL');
+      $('scrapeBtn').disabled = true;
+      $('scrapeBtn').textContent = '處理中...';
+      try {
+        const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        $('editTitle').value = data.title;
+        $('editContent').value = data.content;
+        $('editTags').value = (data.tags || []).join(', ');
+        $('editExcerpt').value = data.excerpt || '';
+        updatePreview();
+      } catch (e) { alert('生成失敗: ' + e.message); }
+      finally { $('scrapeBtn').disabled = false; $('scrapeBtn').textContent = '抓取並重寫'; }
+    };
 
-  <!-- 尾部 -->
-  <div class="mt-8 text-center text-sm text-gray-500 border-t pt-6">
-    © 2026 內容多渠道发布系统
-  </div>
-</div>
+    $('finalPublishBtn').onclick = async () => {
+      const title = $('editTitle').value.trim();
+      const content = $('editContent').value.trim();
+      const platforms = Array.from(document.querySelectorAll('input[name="platforms"]:checked')).map(i => i.value);
+      if (!title || !content || platforms.length === 0) return alert('請完整填寫並選擇平台');
 
-<script>
-  // 简化的导航切换逻辑
-  const tabs = [
-    { id: 'navPublish', view: 'viewPublish' },
-    { id: 'navHistory', view: 'viewHistory' },
-    { id: 'navSettings', view: 'viewSettings' },
-    { id: 'navPrompts', view: 'viewPrompts' }
-  ];
+      $('finalPublishBtn').disabled = true;
+      $('finalPublishBtn').textContent = '啟動中...';
+      
+      try {
+        const res = await fetch('/api/publish', { 
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify({ 
+            title, content, platforms, 
+            tags: $('editTags').value.split(',').filter(Boolean),
+            excerpt: $('editExcerpt').value,
+            publishStatus: document.querySelector('input[name="pubStatus"]:checked').value,
+            url: $('sourceUrl').value || 'manual' 
+          }) 
+        });
+        const result = await res.json();
+        if (result.success && result.batchId) { showView('history'); trackBatchProgress(result.batchId); }
+        else { alert('啟動失敗: ' + (result.error || '未知錯誤')); }
+      } catch (e) { alert('網絡錯誤: ' + e.message); }
+      finally { $('finalPublishBtn').disabled = false; $('finalPublishBtn').textContent = '立即分發發佈'; }
+    };
 
-  function setActive(tabIdx) {
-    document.querySelectorAll('[id^=nav]').forEach(t => t.classList.remove('text-blue-600', 'border-blue-600'));
-    document.querySelectorAll('[id^=view]').forEach(v => v.classList.add('hidden'));
-    tabs[tabIdx].el.classList.add('text-blue-600', 'border-blue-600');
-    document.getElementById(tabs[tabIdx].view).classList.remove('hidden');
-  }
+    const activeTrackers = new Set();
+    function trackBatchProgress(batchId) {
+      if (activeTrackers.has(batchId)) return;
+      activeTrackers.add(batchId);
+      const interval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/batch-status/${batchId}`);
+          const data = await res.json();
+          updateHistoryItemUI(batchId, data);
+          if (data.isFinished) { clearInterval(interval); activeTrackers.delete(batchId); loadHistory(); }
+        } catch (e) { clearInterval(interval); activeTrackers.delete(batchId); }
+      }, 3000);
+    }
 
-  document.querySelectorAll('[id^=nav]').forEach((el, i) => {
-    el.addEventListener('click', () => setActive(i));
-  });
-  setActive(0); // 默认文章发布
+    function updateHistoryItemUI(batchId, data) {
+      const itemEl = document.querySelector(`[data-batch="${batchId}"]`);
+      if (!itemEl) return;
+      const bar = itemEl.querySelector('.progress-bar');
+      if (bar) bar.style.width = `${data.percent}%`;
+      const text = itemEl.querySelector('.progress-text');
+      if (text) text.textContent = data.isFinished ? '分發完成' : `進度: ${data.completed}/${data.total}`;
+    }
 
-  // 动态加载平台复选框
-  async function loadPlatforms() {
-    const res = await fetch('/api/platforms');
-    const data = await res.json();
-    const container = document.getElementById('platformCheckboxes');
-    container.innerHTML = data.platforms.map(p => {
-      const checked = (data.defaults || []).includes(p.name) ? 'checked' : '';
-      return `
-        <label class="flex items-center gap-2">
-          <input type="checkbox" name="platforms" value="${p.name}" ${checked} class="mt-1 rounded text-blue-600 focus:ring-blue-500" />
-          <span class="font-semibold text-blue-800">${p.name}</span>
-        </label>`;
-    }).join('');
-  }
-  loadPlatforms();
+    async function loadBrandProfile() {
+      try {
+        const res = await fetch('/api/v2/brand-profile');
+        const data = await res.json();
+        const badge = $('top-dispatch-badge');
+        badge.className = `px-3 py-1 rounded-full text-xs font-medium block ${data.dispatchReady ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`;
+        badge.textContent = data.dispatchReady ? '✓ 品牌資料已就緒' : '⚠ 品牌資料不完整';
+        if (data.profile) {
+          $('brand-name').value = data.profile.name;
+          $('brand-target-urls').value = (data.profile.target_urls || []).map(t => `${t.url} ${t.context_tag}`).join('\n');
+        }
+      } catch (e) {}
+    }
 
-  // 实时预览
-  function updatePreview() {
-    const content = document.getElementById('contentInput').value || '';
-    const html = marked.parse(content);
-    document.getElementById('markdownPreview').innerHTML = html;
-  }
-  updatePreview();
+    $('brand-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = {
+        name: $('brand-name').value.trim(),
+        target_urls: $('brand-target-urls').value.split('\n').filter(Boolean).map(line => {
+          const [url, ...tags] = line.trim().split(/\s+/);
+          return { url, context_tag: tags.join(' ') };
+        }),
+        exposure_blocklist: [], name_variants: [], anchor_blocklist: []
+      };
+      const res = await fetch('/api/v2/brand-profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (res.ok) { alert('保存成功'); loadBrandProfile(); }
+    };
 
-  // 表单保存
-  document.getElementById('generateBtn').addEventListener('click', async () => {
-    const title = document.getElementById('titleInput').value.trim();
-    const content = document.getElementById('contentInput').value.trim();
-    if(!title||!content) return alert('请填写标题和正文');
-    // 这里可以调用后端接口生成
-    alert('内容生成逻辑待接入后端 API');
-  });
+    async function loadHistory() {
+      try {
+        const res = await fetch('/api/history');
+        const data = await res.json();
+        if (data.length === 0) { $('history-list').innerHTML = '<div class="text-center py-10 text-gray-400">暫無記錄</div>'; return; }
+        $('history-list').innerHTML = data.map(item => `
+          <div class="bg-white p-4 rounded-lg shadow-sm border" data-batch="${item.batch_id || ''}">
+            <div class="flex justify-between items-start mb-2">
+              <h4 class="font-bold text-gray-800">${item.title}</h4>
+              <span class="text-[10px] text-gray-400">${new Date(item.created_at).toLocaleString()}</span>
+            </div>
+            <div class="text-[10px] text-gray-500 mb-3 truncate">${item.original_url}</div>
+            ${item.batch_id ? `<div class="mb-2"><div class="w-full bg-gray-100 rounded-full h-1"><div class="progress-bar bg-blue-500 h-1 rounded-full w-0"></div></div><div class="progress-text text-[9px] text-blue-500 mt-1">同步中...</div></div>` : ''}
+            <div class="flex flex-wrap gap-2">
+              ${JSON.parse(item.results || '[]').map(r => `<a href="${r.publishedUrl || '#'}" target="_blank" class="text-[10px] px-2 py-0.5 rounded border ${r.success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}">${r.platform}</a>`).join('')}
+            </div>
+          </div>
+        `).join('');
+        data.forEach(item => { if (item.batch_id) trackBatchProgress(item.batch_id); });
+      } catch (e) {}
+    }
 
-  // 自动发布
-  document.getElementById('autoPublishBtn').addEventListener('click', async () => {
-    const platforms = Array.from(document.querySelectorAll('#platformCheckboxes input[name="platforms"]:checked')).map(cb=>cb.value);
-    if(platforms.length===0) return alert('请选择至少一个平台');
-    const status = document.querySelector('input[name="publishStatus"]:checked').value;
-    alert(`即将向 ${platforms.join(',')} 发布（${status}）`);
-  });
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        let html = '';
+        for (const [key, val] of Object.entries(data)) {
+          if (key !== 'AUTH_STATUS') html += `<div class="p-2 border rounded"><strong>${key}:</strong> <span class="text-gray-500">${val}</span></div>`;
+        }
+        $('settings-form').innerHTML = html;
+      } catch (e) {}
+    }
 
-  // 表单自动更新选中状态
-  window.addEventListener('load', () => {
-    document.getElementById('titleInput').addEventListener('input', updatePreview);
-    document.getElementById('contentInput').addEventListener('input', updatePreview);
-    document.getElementById('tagsInput').addEventListener('input', updatePreview);
-    document.getElementById('excerptInput').addEventListener('input', updatePreview);
-  });
-</script>
+    window.onload = () => showView('publish');
+  </script>
 </body>
 </html>
