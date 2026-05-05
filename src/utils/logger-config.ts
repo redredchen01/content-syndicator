@@ -2,12 +2,33 @@ import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
+import { AsyncLogger } from './async-logger';
 
 const logsDir = path.join(process.cwd(), '.data', 'logs');
 
 // Ensure logs directory exists
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
+}
+
+// 初始化异步日志缓冲
+const asyncLogger = new AsyncLogger(logsDir, 5000, 1000);
+
+// 自定义 Winston Transport，使用 AsyncLogger
+class AsyncLoggerTransport extends winston.Transport {
+  constructor(opts?: any) {
+    super(opts);
+  }
+
+  log(info: any, callback?: () => void) {
+    asyncLogger.enqueue({
+      timestamp: Date.now(),
+      level: info.level,
+      message: info.message,
+      meta: { ...info, message: undefined, level: undefined },
+    });
+    if (callback) callback();
+  }
 }
 
 const customFormat = winston.format.combine(
@@ -34,17 +55,10 @@ const transports: winston.transport[] = [
     ),
   }),
 
-  // Daily file rotation (all logs)
-  new DailyRotateFile({
-    dirname: logsDir,
-    filename: 'app-%DATE%.log',
-    datePattern: 'YYYY-MM-DD',
-    maxSize: '20m',
-    maxDays: '7d',
-    format: dailyRotateFormat,
-  }),
+  // AsyncLogger Transport (all logs with async buffering)
+  new AsyncLoggerTransport(),
 
-  // Error file with daily rotation (errors only)
+  // Daily file rotation for errors (fallback)
   new DailyRotateFile({
     dirname: logsDir,
     filename: 'error-%DATE%.log',
@@ -72,3 +86,14 @@ if (process.env.NODE_ENV === 'test') {
     }),
   );
 }
+
+// 进程关闭时清理
+process.on('SIGTERM', async () => {
+  await asyncLogger.shutdown();
+});
+
+process.on('SIGINT', async () => {
+  await asyncLogger.shutdown();
+});
+
+export { asyncLogger };
