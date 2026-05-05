@@ -1,0 +1,77 @@
+{
+  "generatedAt": "2026-05-05T05:02:24.666Z",
+  "platforms": [
+    {
+      "platform": "Telegra.ph",
+      "tokenConfigured": true,
+      "apiReachable": "unsupported",
+      "apiDetail": "endpoint reachable, error: ACCESS_TOKEN_INVALID",
+      "headSupported": true,
+      "headDetail": "HTTP 200",
+      "recommended": "drop"
+    },
+    {
+      "platform": "Dev.to",
+      "tokenConfigured": false,
+      "apiReachable": "skipped",
+      "apiDetail": "DEVTO_API_KEY not set",
+      "headSupported": true,
+      "headDetail": "HTTP 200",
+      "recommended": "inspect"
+    },
+    {
+      "platform": "Medium",
+      "tokenConfigured": false,
+      "apiReachable": "skipped",
+      "apiDetail": "MEDIUM_INTEGRATION_TOKEN not set",
+      "headSupported": false,
+      "headDetail": "HTTP 403",
+      "recommended": "inspect"
+    },
+    {
+      "platform": "Hashnode",
+      "tokenConfigured": false,
+      "apiReachable": "skipped",
+      "apiDetail": "HASHNODE_TOKEN not set",
+      "headSupported": true,
+      "headDetail": "HTTP 200",
+      "recommended": "inspect"
+    },
+    {
+      "platform": "GitHub",
+      "tokenConfigured": false,
+      "apiReachable": "skipped",
+      "apiDetail": "GITHUB_TOKEN not set",
+      "headSupported": true,
+      "headDetail": "HTTP 301",
+      "recommended": "inspect"
+    },
+    {
+      "platform": "Blogger",
+      "tokenConfigured": false,
+      "apiReachable": "skipped",
+      "apiDetail": "GOOGLE_APPLICATION_CREDENTIALS_JSON or BLOGGER_BLOG_ID not set",
+      "headSupported": true,
+      "headDetail": "HTTP 302",
+      "recommended": "inspect"
+    },
+    {
+      "platform": "WordPress",
+      "tokenConfigured": false,
+      "apiReachable": "skipped",
+      "apiDetail": "WORDPRESS_SITE_URL / USERNAME / APP_PASSWORD not all set",
+      "headSupported": true,
+      "headDetail": "HTTP 301",
+      "recommended": "inspect"
+    }
+  ],
+  "headSupportedMap": {
+    "Telegra.ph": true,
+    "Dev.to": true,
+    "Medium": false,
+    "Hashnode": true,
+    "GitHub": true,
+    "Blogger": true,
+    "WordPress": true
+  }
+}
