@@ -1,7 +1,6 @@
-import { PlatformAdapter, PublishResult, PublishOptions } from './base';
-import { logger } from '../utils/logger';
+import { BaseAdapter, PublishResult, PublishOptions } from './base';
 
-export class TelegraphAdapter implements PlatformAdapter {
+export class TelegraphAdapter extends BaseAdapter {
   name = 'Telegra.ph';
   canPublishAutomatically = true;
   private accessToken?: string;
@@ -120,22 +119,10 @@ export class TelegraphAdapter implements PlatformAdapter {
       });
       const data = await this.parseTelegraphResponse(response);
 
-      if (data.ok) {
-        return {
-          platform: this.name,
-          success: true,
-          publishedUrl: data.result.url
-        };
-      }
-
+      if (data.ok) return this.ok(data.result.url);
       throw new Error(data.error || 'Failed to publish to Telegraph');
     } catch (error: any) {
-      logger.error(`[${this.name}] Publish failed`, error);
-      return {
-        platform: this.name,
-        success: false,
-        error: error.message
-      };
+      return this.fail(error);
     }
   }
 }
