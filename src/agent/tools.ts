@@ -33,12 +33,14 @@ export abstract class AgentTool {
   }
 }
 
+import { logger } from '../utils/logger';
+
 export class ToolRegistry {
   private tools: Map<string, AgentTool> = new Map();
 
   register(tool: AgentTool): void {
     this.tools.set(tool.name, tool);
-    console.log(`[ToolRegistry] Registered tool: ${tool.name}`);
+    logger.info(`[ToolRegistry] Registered tool: ${tool.name}`);
   }
 
   get(name: string): AgentTool | undefined {

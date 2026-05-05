@@ -16,17 +16,11 @@ export class Planner {
     this.tools = tools;
   }
 
-  async plan(context: AgentContext, task: string): Promise<Plan> {
+  plan(context: AgentContext, task: string): Plan {
     logger.info('[Planner] Creating plan based on current context...');
-
-    // Decision logic based on context state
     const plan = this.decideNextAction(context, task);
-
-    logger.info(`[Planner] Decision: ${plan.action} (confidence: ${plan.confidence || 'N/A'})`);
-    if (plan.reasoning) {
-      logger.info(`[Planner] Reasoning: ${plan.reasoning}`);
-    }
-
+    logger.info(`[Planner] Decision: ${plan.action} (confidence: ${plan.confidence ?? 'N/A'})`);
+    if (plan.reasoning) logger.info(`[Planner] Reasoning: ${plan.reasoning}`);
     return plan;
   }
 
