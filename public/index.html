@@ -681,6 +681,7 @@ function syndicatorApp() {
     settingsRaw: {},
     settingsToast: { text: '', kind: 'ok' },
     sectionOpen: { llm: false, platforms: false, browser: false, infra: false },
+    isSavingAny: false,
     // LLM section
     llmForm: { GEMINI_API_KEY: '', OPENAI_API_KEY: '', SELECTED_MODEL: '' },
     llmSaving: false,
@@ -910,8 +911,7 @@ function syndicatorApp() {
     // ── Settings: shared loaders ───────────────────────
     async loadSettings() {
       try {
-        const res = await fetch('/api/settings');
-        const data = await res.json();
+        const data = await this.fetchJson('/api/settings', {}, 15000);
         delete data.AUTH_STATUS;
         this.settingsRaw = data;
         // Seed browser & infra forms with current values (LLM stays empty until user types)
@@ -933,8 +933,7 @@ function syndicatorApp() {
       if (this.platformsLoading) return;
       this.platformsLoading = true;
       try {
-        const res = await fetch('/api/platforms');
-        const data = await res.json();
+        const data = await this.fetchJson('/api/platforms', {}, 15000);
         this.platformsCache = data;
         this.platformsCacheTime = now;
         this.defaultPlatforms = data.defaults || [];
@@ -947,8 +946,7 @@ function syndicatorApp() {
 
     async loadModels() {
       try {
-        const res = await fetch('/api/models');
-        const data = await res.json();
+        const data = await this.fetchJson('/api/models', {}, 20000);
         this.modelList = data.models || [];
         if (!this.llmForm.SELECTED_MODEL && data.selected) this.llmForm.SELECTED_MODEL = data.selected;
       } catch (e) {
@@ -961,32 +959,68 @@ function syndicatorApp() {
       setTimeout(() => { if (this.settingsToast.text === text) this.settingsToast = { text: '', kind }; }, 3500);
     },
 
+    // Universal fetch wrapper with AbortController timeout + auto JSON encode/decode.
+    // Throws Error with .message ready for UI display. Handles FormData (no auto-encode).
+    async fetchJson(url, opts = {}, timeoutMs = 20000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const init = { ...opts, signal: controller.signal };
+        if (init.body && !(init.body instanceof FormData) && typeof init.body === 'object') {
+          init.headers = { 'Content-Type': 'application/json', ...(init.headers || {}) };
+          init.body = JSON.stringify(init.body);
+        }
+        const res = await fetch(url, init);
+        let data = null;
+        try { data = await res.json(); } catch (_) {}
+        if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+        return data;
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error(`請求超時（${timeoutMs / 1000}s）`);
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
+    // Section save helper: global concurrency guard + section flag + uniform error handling.
+    // Returns true on success, false on failure. Caller handles post-success cleanup (clearing inputs).
+    async saveSection({ flagKey, msgKey, payload, url = '/api/settings', method = 'POST', refresh = [], successMsg = '✓ 已保存' }) {
+      if (this.isSavingAny) {
+        this[msgKey] = '✗ 另一個保存進行中，請稍候再試';
+        return false;
+      }
+      this.isSavingAny = true;
+      this[flagKey] = true;
+      this[msgKey] = '';
+      try {
+        await this.fetchJson(url, { method, body: payload }, 30000);
+        for (const fn of refresh) await fn.call(this);
+        this[msgKey] = typeof successMsg === 'function' ? successMsg.call(this) : successMsg;
+        return true;
+      } catch (e) {
+        this[msgKey] = `✗ ${e.message}`;
+        return false;
+      } finally {
+        this[flagKey] = false;
+        this.isSavingAny = false;
+      }
+    },
+
     // ── Settings: LLM section ──────────────────────────
     async saveLlmSettings() {
-      this.llmSaving = true;
-      this.llmSaveMsg = '';
       const payload = {};
       if (this.llmForm.GEMINI_API_KEY.trim()) payload.GEMINI_API_KEY = this.llmForm.GEMINI_API_KEY.trim();
       if (this.llmForm.OPENAI_API_KEY.trim()) payload.OPENAI_API_KEY = this.llmForm.OPENAI_API_KEY.trim();
       if (this.llmForm.SELECTED_MODEL) payload.SELECTED_MODEL = this.llmForm.SELECTED_MODEL;
-      try {
-        const res = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
-        this.llmForm.GEMINI_API_KEY = '';
-        this.llmForm.OPENAI_API_KEY = '';
-        await this.loadSettings();
-        await this.loadModels();
-        await this.loadBrandProfile();
-        this.llmSaveMsg = `✓ 已保存（${this.modelList.length} 個模型可用）`;
-      } catch (e) {
-        this.llmSaveMsg = `✗ ${e.message}`;
-      } finally {
-        this.llmSaving = false;
-      }
+      const ok = await this.saveSection({
+        flagKey: 'llmSaving',
+        msgKey: 'llmSaveMsg',
+        payload,
+        refresh: [this.loadSettings, this.loadModels, this.loadBrandProfile],
+        successMsg() { return `✓ 已保存（${this.modelList.length} 個模型可用）`; },
+      });
+      if (ok) { this.llmForm.GEMINI_API_KEY = ''; this.llmForm.OPENAI_API_KEY = ''; }
     },
 
     // ── Settings: Platforms section ────────────────────
@@ -999,8 +1033,7 @@ function syndicatorApp() {
     async testPlatform(id) {
       this.platformTesting = { ...this.platformTesting, [id]: true };
       try {
-        const res = await fetch(`/api/auth/test-connection/${id}`, { method: 'POST' });
-        const data = await res.json();
+        const data = await this.fetchJson(`/api/auth/test-connection/${id}`, { method: 'POST' }, 20000);
         this.flashToast(data.ok ? `✓ ${id} 連接正常` : `✗ ${id}：${data.error || '驗證失敗'}`, data.ok ? 'ok' : 'err');
         await this.loadPlatforms(true);
       } catch (e) {
@@ -1013,16 +1046,15 @@ function syndicatorApp() {
     async savePlatformKey(id) {
       const apiKey = this.platformKeyInput.trim();
       if (!apiKey) return;
+      if (this.isSavingAny) {
+        this.platformKeyStatus = { text: '✗ 另一個保存進行中，請稍候再試', kind: 'err' };
+        return;
+      }
+      this.isSavingAny = true;
       this.platformSaving = true;
       this.platformKeyStatus = { text: '保存並驗證中…', kind: 'ok' };
       try {
-        const res = await fetch(`/api/platforms/${id}/api-key`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ apiKey }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        await this.fetchJson(`/api/platforms/${id}/api-key`, { method: 'PATCH', body: { apiKey } }, 30000);
         this.platformKeyStatus = { text: '✓ 密鑰已驗證並保存', kind: 'ok' };
         this.platformKeyInput = '';
         setTimeout(() => { this.platformFormOpen = null; }, 800);
@@ -1032,13 +1064,14 @@ function syndicatorApp() {
         this.platformKeyStatus = { text: `✗ ${e.message}`, kind: 'err' };
       } finally {
         this.platformSaving = false;
+        this.isSavingAny = false;
       }
     },
 
     async batchValidatePlatforms() {
       this.batchValidating = true;
       try {
-        await fetch('/api/platforms/batch-validate', { method: 'POST' });
+        await this.fetchJson('/api/platforms/batch-validate', { method: 'POST' }, 60000);
         await this.loadPlatforms(true);
         this.flashToast('✓ 全部平台已重新測試', 'ok');
       } catch (e) {
@@ -1050,29 +1083,17 @@ function syndicatorApp() {
 
     // ── Settings: Browser section ──────────────────────
     async saveBrowserSettings() {
-      this.browserSaving = true;
-      this.browserSaveMsg = '';
-      try {
-        const res = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ENABLE_BROWSER_AUTOMATION: this.browserForm.ENABLE_BROWSER_AUTOMATION,
-            BROWSER_AUTH_MODE: this.browserForm.BROWSER_AUTH_MODE,
-            BROWSER_AUTH_CHROME_USER_DATA_DIR: this.browserForm.BROWSER_AUTH_CHROME_USER_DATA_DIR,
-            BROWSER_AUTH_CHROME_PROFILE: this.browserForm.BROWSER_AUTH_CHROME_PROFILE,
-          }),
-        });
-        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
-        await this.loadSettings();
-        await this.loadPlatforms(true);
-        await this.loadBrandProfile();
-        this.browserSaveMsg = '✓ 已保存';
-      } catch (e) {
-        this.browserSaveMsg = `✗ ${e.message}`;
-      } finally {
-        this.browserSaving = false;
-      }
+      await this.saveSection({
+        flagKey: 'browserSaving',
+        msgKey: 'browserSaveMsg',
+        payload: {
+          ENABLE_BROWSER_AUTOMATION: this.browserForm.ENABLE_BROWSER_AUTOMATION,
+          BROWSER_AUTH_MODE: this.browserForm.BROWSER_AUTH_MODE,
+          BROWSER_AUTH_CHROME_USER_DATA_DIR: this.browserForm.BROWSER_AUTH_CHROME_USER_DATA_DIR,
+          BROWSER_AUTH_CHROME_PROFILE: this.browserForm.BROWSER_AUTH_CHROME_PROFILE,
+        },
+        refresh: [this.loadSettings, () => this.loadPlatforms(true), this.loadBrandProfile],
+      });
     },
 
     async importSessionsZip() {
@@ -1082,9 +1103,7 @@ function syndicatorApp() {
       try {
         const fd = new FormData();
         fd.append('file', this.zipFile);
-        const res = await fetch('/api/auth/import-sessions', { method: 'POST', body: fd });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const data = await this.fetchJson('/api/auth/import-sessions', { method: 'POST', body: fd }, 90000);
         this.zipImportResult = data;
         this.zipFile = null;
         await this.loadPlatforms(true);
@@ -1098,13 +1117,7 @@ function syndicatorApp() {
 
     async openBrowserLogin(platformId) {
       try {
-        const res = await fetch('/api/auth/browser', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ platform: platformId }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const data = await this.fetchJson('/api/auth/browser', { method: 'POST', body: { platform: platformId } }, 30000);
         this.flashToast(data.message || `已打開 ${platformId} 登入窗口，登入後關閉即可保存`, 'ok');
       } catch (e) {
         this.flashToast(`✗ ${e.message}`, 'err');
@@ -1113,13 +1126,7 @@ function syndicatorApp() {
 
     async testBrowserSession(platformId) {
       try {
-        const res = await fetch('/api/auth/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ platform: platformId }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const data = await this.fetchJson('/api/auth/test', { method: 'POST', body: { platform: platformId } }, 30000);
         this.flashToast(data.message || `已打開 ${platformId} 測試窗口`, 'ok');
       } catch (e) {
         this.flashToast(`✗ ${e.message}`, 'err');
@@ -1128,29 +1135,18 @@ function syndicatorApp() {
 
     // ── Settings: Infra section ────────────────────────
     async saveInfraSettings() {
-      this.infraSaving = true;
-      this.infraSaveMsg = '';
       const payload = {};
       if (this.infraForm.GOOGLE_SHEET_ID.trim()) payload.GOOGLE_SHEET_ID = this.infraForm.GOOGLE_SHEET_ID.trim();
       if (this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON.trim()) {
         payload.GOOGLE_APPLICATION_CREDENTIALS_JSON = this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON.trim();
       }
-      try {
-        const res = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
-        this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON = '';
-        await this.loadSettings();
-        await this.loadBrandProfile();
-        this.infraSaveMsg = '✓ 已保存';
-      } catch (e) {
-        this.infraSaveMsg = `✗ ${e.message}`;
-      } finally {
-        this.infraSaving = false;
-      }
+      const ok = await this.saveSection({
+        flagKey: 'infraSaving',
+        msgKey: 'infraSaveMsg',
+        payload,
+        refresh: [this.loadSettings, this.loadBrandProfile],
+      });
+      if (ok) this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON = '';
     },
   };
 }
