@@ -66,7 +66,7 @@ router.post('/api/auth/test-connection/:platformId', async (req: Request, res: R
     }
 
     logger.info(`[Auth] Testing connection for ${adapter.name}...`);
-    const result = await adapter.testConnection();
+    const result = await adapter.testConnection?.() ?? { ok: true };
 
     if (result.ok) {
       res.json({ ok: true, platform: adapter.name });

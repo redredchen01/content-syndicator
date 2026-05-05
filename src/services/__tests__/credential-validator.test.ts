@@ -48,7 +48,7 @@ describe('Credential Validator', () => {
 
     const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles WHERE brand_id = ?').get('default');
     expect(statusRow).toBeDefined();
-    const status = JSON.parse(statusRow.platform_test_status);
+    const status = JSON.parse((statusRow as any).platform_test_status);
     expect(status.devto).toBeDefined();
     expect(typeof status.devto.connected_at).toBe('string');
     expect(typeof status.devto.test_timestamp).toBe('string');
@@ -83,7 +83,7 @@ describe('Credential Validator', () => {
     await validateAllCredentials(db);
 
     const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles WHERE brand_id = ?').get('default');
-    const status = JSON.parse(statusRow.platform_test_status);
+    const status = JSON.parse((statusRow as any).platform_test_status);
     expect(status.devto.connected_at).toBe(originalTimestamp);
   });
 
@@ -100,7 +100,7 @@ describe('Credential Validator', () => {
 
     if (failed) {
       const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles WHERE brand_id = ?').get('default');
-      const status = JSON.parse(statusRow.platform_test_status);
+      const status = JSON.parse((statusRow as any).platform_test_status);
       expect(status.devto.last_test_error).toBeDefined();
     }
   });
@@ -117,7 +117,7 @@ describe('Credential Validator', () => {
     await validateAllCredentials(db);
 
     const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles WHERE brand_id = ?').get('default');
-    const status = JSON.parse(statusRow.platform_test_status);
+    const status = JSON.parse((statusRow as any).platform_test_status);
     // If validation passes, error should be null
     if (status.devto.last_test_error === null) {
       expect(status.devto.last_test_error).toBeNull();
