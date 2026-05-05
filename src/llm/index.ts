@@ -1,5 +1,4 @@
-import { OpenAI } from 'openai';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import { getOpenAIClient, getGeminiClient, safetySettings } from './client';
 import { ScrapedData } from '../scraper';
 import fs from 'fs';
 import path from 'path';
@@ -81,11 +80,7 @@ export async function invokeLLM(prompt: string, fallbackContent?: string, fallba
   const selectedModel = process.env.SELECTED_MODEL || '';
 
   const runOpenAI = async (modelName: string) => {
-    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not defined for fallback.');
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
+    const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
       model: modelName,
       messages: [
@@ -102,15 +97,8 @@ export async function invokeLLM(prompt: string, fallbackContent?: string, fallba
 
   if (selectedModel.includes('gemini') && process.env.GEMINI_API_KEY) {
     try {
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const genAI = getGeminiClient();
       const model = genAI.getGenerativeModel({ model: selectedModel });
-      
-      const safetySettings = [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ];
 
       const result = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],

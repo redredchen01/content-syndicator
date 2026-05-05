@@ -5,6 +5,8 @@ import fs from 'fs';
 import multer from 'multer';
 import csv from 'csv-parser';
 import { chromium } from 'playwright';
+import { acquirePage, releasePage } from './utils/browserManager';
+import { resetLLMClients } from './llm/client';
 import { scrapeUrl } from './scraper';
 import { generateMarkdown, generatePromoMarkdown, getRawPrompts, saveRawPrompts } from './llm';
 import { PlatformAdapter } from './adapters/base';
@@ -346,6 +348,12 @@ function updateEnv(newConfig: Record<string, string>) {
     }
   }
   fs.writeFileSync(ENV_PATH, envContent.trim() + '\n', 'utf8');
+
+  // Invalidate LLM singleton if provider keys or model changed
+  const llmKeys = ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'SELECTED_MODEL'];
+  if (Object.keys(newConfig).some(k => llmKeys.includes(k))) {
+    resetLLMClients();
+  }
 }
 
 app.get('/api/settings', (req, res) => {
@@ -451,8 +459,8 @@ app.post('/api/auth/browser', async (req, res) => {
   try {
     const authSession = await createBrowserAuthContext(platform);
     const context = authSession.context;
-    const page = await context.newPage();
-    
+    const page = await acquirePage(context);
+
     // Respond immediately to not block UI
     res.json({ success: true, message: `Opened ${authSession.mode} for ${platform}. Please log in and close the window to save your session.` });
 
@@ -510,13 +518,14 @@ app.post('/api/auth/test', async (req, res) => {
   try {
     const authSession = await createBrowserAuthContext(platform);
     const context = authSession.context;
-    const page = await context.newPage();
-    
+    const page = await acquirePage(context);
+
     res.json({ success: true, message: `Testing ${platform} session in ${authSession.mode}. If you see the editor/dashboard, your cookies are valid!` });
 
     await page.goto(testUrl);
 
     page.on('close', async () => {
+      releasePage(page).catch(() => {});
       // Optionally update the cookies when testing just in case they refreshed
       try {
         await context.storageState({ path: authFile });

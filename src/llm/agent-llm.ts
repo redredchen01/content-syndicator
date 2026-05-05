@@ -1,10 +1,9 @@
-import { OpenAI } from 'openai';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { retryOperation } from '../utils/smartRetry';
 import { RETRY_CONFIG } from '../constants';
 import { logger } from '../utils/logger';
 import type { LLMMessage, LLMResponse, LLMWithToolsOptions, ToolCall } from '../types';
+import { getOpenAIClient, getGeminiClient, safetySettings } from './client';
 
 // Re-export so existing callers (agent/core.ts) don't need to change imports
 export type { LLMMessage, LLMResponse, LLMWithToolsOptions };
@@ -38,11 +37,7 @@ export async function invokeLLMWithTools(options: LLMWithToolsOptions): Promise<
 }
 
 async function invokeOpenAIWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not configured');
-  }
-
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const openai = getOpenAIClient(); // throws if OPENAI_API_KEY not set
 
   return await retryOperation(async () => {
     const response = await openai.chat.completions.create({
@@ -64,12 +59,8 @@ async function invokeOpenAIWithTools(options: LLMWithToolsOptions): Promise<LLMR
 }
 
 async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not configured');
-  }
-
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ 
+  const genAI = getGeminiClient(); // throws if GEMINI_API_KEY not set
+  const model = genAI.getGenerativeModel({
     model: options.model || 'gemini-1.5-flash',
   });
 
@@ -90,12 +81,7 @@ async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMR
     });
   }
 
-  const safetySettings = [
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  ];
+  // safetySettings imported from ./client (shared with llm/index.ts)
 
   return await retryOperation(async () => {
     const result = await model.generateContent({

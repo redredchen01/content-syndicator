@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
 import { logger } from '../utils/logger';
-import { getBrowser } from '../utils/browserManager';
+import { getBrowser, acquirePage, releasePage } from '../utils/browserManager';
 
 const execFileAsync = util.promisify(execFile);
 
@@ -73,7 +73,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
   });
-  const page = await context.newPage();
+  const page = await acquirePage(context);
   page.setDefaultNavigationTimeout(45000);
   page.setDefaultTimeout(15000);
   
@@ -164,6 +164,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
     logger.error('Scraping or markitdown execution failed', error);
     throw new Error(`Failed to extract and clean article content: ${error.message}`);
   } finally {
+    await releasePage(page).catch(() => {});
     await context.close();
     // 5. Cleanup temporary file
     try {
