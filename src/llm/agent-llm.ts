@@ -97,9 +97,10 @@ async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMR
 
     const text = result.response.text();
 
+    logger.warn('[LLM] Gemini function calling not implemented, tool_calls will be empty');
     return {
       content: text,
-      tool_calls: [], // Simplified - full tool support would parse function calls from response
+      tool_calls: [],
       raw: result,
     };
   }, RETRY_CONFIG.MAX_ATTEMPTS);
@@ -114,7 +115,12 @@ export async function invokeLLMSimple(prompt: string, fallbackContent?: string, 
   try {
     const response = await invokeLLMWithTools({ messages });
     if (!response.content) throw new Error('No output from LLM');
-    return JSON.parse(response.content);
+    try {
+      return JSON.parse(response.content);
+    } catch {
+      logger.warn('[LLM] invokeLLMSimple: response is not JSON, returning raw string');
+      return response.content;
+    }
   } catch (error: any) {
     if (fallbackContent && fallbackTitle) {
       return {

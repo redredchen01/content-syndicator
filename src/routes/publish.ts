@@ -1,0 +1,399 @@
+import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
+import csv from 'csv-parser';
+import { logger, randomSleep } from '../utils/logger';
+import { scrapeUrl } from '../scraper';
+import { generateMarkdown, generatePromoMarkdown } from '../llm';
+import { allAdapters } from '../adapters/index';
+import { appendToSheet } from '../sheets';
+import { db, savePost } from '../db';
+import { publishJobs } from '../db/repositories';
+import { asyncRoute, syncRoute } from './_helpers';
+import { resolveTargetPlatforms } from './admin';
+
+export const router = express.Router();
+
+const upload = multer({ dest: path.join(process.cwd(), '.data', 'uploads') });
+
+async function publishToPlatforms(options: {
+  sourceUrl: string;
+  title: string;
+  content: string;
+  tags?: string[];
+  excerpt?: string;
+  platforms?: unknown;
+  publishStatus?: 'draft' | 'public';
+}) {
+  const targetPlatforms = resolveTargetPlatforms(options.platforms);
+  const adapters = allAdapters.filter(a => targetPlatforms.includes(a.name));
+
+  if (adapters.length === 0) {
+    throw new Error('No connected or valid platforms available. Connect at least one channel in Settings first.');
+  }
+
+  const results: any[] = [];
+  logger.info(`API: Starting publishing process to ${adapters.map(a => a.name).join(', ')}...`);
+
+  const publishStatus = options.publishStatus === 'public' ? 'public' : 'draft';
+  const apiAdapters = adapters.filter(a => !a.isBrowserAutomation);
+  const browserAdapters = adapters.filter(a => a.isBrowserAutomation);
+
+  if (apiAdapters.length > 0) {
+    logger.info(`API: Publishing concurrently to ${apiAdapters.length} API platforms...`);
+    const apiPromises = apiAdapters.map(async (adapter) => {
+      try {
+        const result = await adapter.publish({
+          title: options.title,
+          markdownContent: options.content,
+          tags: options.tags,
+          excerpt: options.excerpt,
+          originalUrl: options.sourceUrl,
+          publishStatus
+        });
+        if (result.success) {
+          logger.success(`[${adapter.name}] Published! URL: ${result.publishedUrl}`);
+        } else {
+          logger.error(`[${adapter.name}] Failed: ${result.error}`);
+        }
+        return result;
+      } catch (error: any) {
+        logger.error(`[${adapter.name}] Unexpected Error`, error);
+        return { platform: adapter.name, success: false, error: error.message };
+      }
+    });
+    const apiResults = await Promise.all(apiPromises);
+    results.push(...apiResults);
+  }
+
+  if (browserAdapters.length > 0) {
+    logger.info(`API: Publishing sequentially to ${browserAdapters.length} Browser platforms...`);
+    for (let i = 0; i < browserAdapters.length; i++) {
+      const adapter = browserAdapters[i];
+      logger.info(`Publishing to ${adapter.name}...`);
+
+      try {
+        const result = await adapter.publish({
+          title: options.title,
+          markdownContent: options.content,
+          tags: options.tags,
+          excerpt: options.excerpt,
+          originalUrl: options.sourceUrl,
+          publishStatus
+        });
+        results.push(result);
+
+        if (result.success) {
+          logger.success(`[${adapter.name}] Published! URL: ${result.publishedUrl}`);
+        } else {
+          logger.error(`[${adapter.name}] Failed: ${result.error}`);
+        }
+      } catch (error: any) {
+        logger.error(`[${adapter.name}] Unexpected Error`, error);
+        results.push({ platform: adapter.name, success: false, error: error.message });
+      }
+
+      if (i < browserAdapters.length - 1) {
+        const sleepTime = Math.floor(Math.random() * (15000 - 5000 + 1)) + 5000;
+        logger.info(`Sleeping for ${sleepTime}ms before next browser platform...`);
+        await randomSleep(sleepTime, sleepTime);
+      }
+    }
+  }
+
+  logger.info('API: Syncing results to Google Sheets...');
+  await appendToSheet(options.sourceUrl, options.title, results);
+
+  logger.info('API: Saving post to local database...');
+  savePost(options.sourceUrl, options.title, options.content, results);
+
+  return { targetPlatforms, results };
+}
+
+async function runPublishingTask(batchId: string, options: any) {
+  const jobs = db.prepare(
+    `SELECT id, platform FROM publish_jobs WHERE batch_id = ? AND status = 'scheduled'`,
+  ).all(batchId);
+
+  for (const job of jobs as any[]) {
+    publishJobs.markRunning(db, job.id);
+
+    const adapter = allAdapters.find(a => a.name === job.platform);
+    if (!adapter) {
+      publishJobs.markFailed(db, job.id, 'Adapter not found', null, 2);
+      continue;
+    }
+
+    try {
+      logger.info(`[Async Worker] Publishing ${batchId} to ${job.platform}...`);
+      const result = await adapter.publish({
+        title: options.title,
+        markdownContent: options.content,
+        tags: options.tags,
+        excerpt: options.excerpt,
+        originalUrl: options.sourceUrl,
+        publishStatus: options.publishStatus,
+      });
+
+      if (result.success) {
+        publishJobs.markSucceededWithUrl(db, job.id, result.publishedUrl || '');
+      } else {
+        publishJobs.markFailed(db, job.id, result.error || 'Unknown error', null, 2);
+      }
+    } catch (err: any) {
+      publishJobs.markFailed(db, job.id, err.message, null, 2);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 5000));
+  }
+
+  const finalJobs = publishJobs.byBatch(db, batchId);
+  const formattedResults = finalJobs.map(r => ({
+    platform: r.platform,
+    success: r.status === 'succeeded',
+    error: r.last_error ?? undefined,
+    publishedUrl: r.status === 'succeeded' ? JSON.parse(r.metadata_json || '{}').publishedUrl : undefined
+  }));
+
+  appendToSheet(options.sourceUrl, options.title, formattedResults).catch(e => logger.error('Sheets sync error', e));
+  savePost(options.sourceUrl, options.title, options.content, formattedResults, batchId);
+}
+
+async function processBulkQueue(urls: string[], targetPlatforms: string[], publishStatus: 'draft' | 'public') {
+  logger.info(`Starting bulk queue processing for ${urls.length} URLs...`);
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i];
+    logger.info(`[Bulk ${i+1}/${urls.length}] Processing URL: ${url}`);
+
+    try {
+      logger.info(`[Bulk ${i+1}/${urls.length}] Scraping...`);
+      const scrapedData = await scrapeUrl(url);
+
+      logger.info(`[Bulk ${i+1}/${urls.length}] Generating markdown...`);
+      const { title, content, tags, excerpt } = await generateMarkdown(scrapedData);
+
+      logger.info(`[Bulk ${i+1}/${urls.length}] Publishing and saving results...`);
+      await publishToPlatforms({
+        sourceUrl: url,
+        title,
+        content,
+        tags,
+        excerpt,
+        platforms: targetPlatforms,
+        publishStatus
+      });
+
+      logger.success(`[Bulk ${i+1}/${urls.length}] Finished processing URL.`);
+    } catch(err: any) {
+      logger.error(`[Bulk ${i+1}/${urls.length}] Failed processing URL ${url}`, err);
+    }
+
+    if (i < urls.length - 1) {
+      const sleepTime = Math.floor(Math.random() * (60000 - 30000 + 1)) + 30000;
+      logger.info(`[Bulk] Sleeping for ${sleepTime/1000}s before next article...`);
+      await randomSleep(sleepTime, sleepTime);
+    }
+  }
+  logger.success('Bulk queue processing completed entirely.');
+}
+
+router.post('/api/generate', asyncRoute(async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  logger.info(`API: Starting scrape for URL: ${url}`);
+  const scrapedData = await scrapeUrl(url);
+  logger.info('API: Calling LLM to generate Markdown content...');
+  const { title, content, tags, excerpt } = await generateMarkdown(scrapedData);
+  res.json({ title, content, originalUrl: url, tags, excerpt });
+}));
+
+router.post('/api/generate-manual', asyncRoute(async (req, res) => {
+  const { rawContent, originalUrl } = req.body;
+  if (!rawContent) return res.status(400).json({ error: 'rawContent is required' });
+
+  logger.info('API: Rewriting manual content via LLM...');
+  const { title, content, tags, excerpt } = await generateMarkdown({
+    title: 'Manual Content',
+    content: rawContent,
+    originalUrl: originalUrl || '',
+  });
+  res.json({ title, content, originalUrl, tags, excerpt });
+}));
+
+router.post('/api/generate-promo', asyncRoute(async (req, res) => {
+  const { title, content, urls } = req.body;
+  if (!title || !content || !Array.isArray(urls)) {
+    return res.status(400).json({ error: 'Missing required fields: title, content, urls' });
+  }
+  logger.info('API: Generating promotional Markdown via LLM...');
+  const promo = await generatePromoMarkdown(title, content, urls);
+  res.json({ title: promo.title, content: promo.content, tags: promo.tags, excerpt: promo.excerpt });
+}));
+
+router.get('/api/batch-status/:batchId', syncRoute((req, res) => {
+  const batchId = req.params.batchId as string;
+  const jobs = publishJobs.byBatch(db, batchId);
+  const total = jobs.length;
+  const completed = jobs.filter(j =>
+    ['succeeded', 'failed_terminal', 'skipped'].includes(j.status),
+  ).length;
+  res.json({
+    batchId,
+    percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+    total,
+    completed,
+    jobs,
+    isFinished: completed === total && total > 0,
+  });
+}));
+
+router.post('/api/publish', async (req, res) => {
+  try {
+    const { url, title, content, tags, excerpt, platforms, publishStatus } = req.body;
+    logger.info(`API Request: /api/publish - Title: ${title}, Platforms: ${JSON.stringify(platforms)}`);
+
+    if (!title || !content) {
+      logger.warn('Publish failed: Missing title or content');
+      return res.status(400).json({ error: 'Missing required fields: title or content' });
+    }
+
+    const sourceUrl = url || 'manual-content';
+    const targetPlatforms = resolveTargetPlatforms(platforms);
+    const batchId = `batch_${Date.now()}`;
+
+    if (targetPlatforms.length === 0) {
+      logger.warn('Publish failed: No platforms resolved');
+      return res.status(400).json({ error: 'No connected or valid platforms available.' });
+    }
+
+    logger.info(`Creating batch ${batchId} for ${targetPlatforms.length} platforms...`);
+
+    const insertJob = db.prepare(`
+      INSERT INTO publish_jobs (batch_id, variant_id, platform, job_type, status, scheduled_at, payload_json)
+      VALUES (?, 'v1', ?, 'publish', 'scheduled', CURRENT_TIMESTAMP, '{}')
+    `);
+
+    try {
+      const transaction = db.transaction((pforms) => {
+        for (const p of pforms) {
+          insertJob.run(batchId, p);
+        }
+      });
+      transaction(targetPlatforms);
+    } catch (dbErr: any) {
+      logger.error('Database insertion failed during publish', dbErr);
+      return res.status(500).json({ error: `Database Error: ${dbErr.message}` });
+    }
+
+    runPublishingTask(batchId, {
+      sourceUrl, title, content, tags, excerpt, publishStatus: publishStatus || 'draft'
+    }).catch(e => logger.error(`Background task for ${batchId} failed early`, e));
+
+    logger.success(`Batch ${batchId} started successfully.`);
+    res.json({ success: true, batchId, message: 'Publishing task started in background' });
+  } catch (error: any) {
+    logger.error('API /api/publish Critical Error', error);
+    res.status(500).json({ error: error.message || 'Internal Server Error' });
+  }
+});
+
+router.post('/api/auto-publish', async (req, res) => {
+  try {
+    const { mode, url, rawContent, originalUrl, platforms, publishStatus } = req.body;
+    const normalizedStatus = publishStatus === 'public' ? 'public' : 'draft';
+
+    let sourceUrl = '';
+    let generated;
+
+    if (mode === 'manual') {
+      if (!rawContent) return res.status(400).json({ error: 'rawContent is required for manual auto-publish' });
+
+      sourceUrl = originalUrl || 'manual-content';
+      logger.info('API: Auto-publish manual content. Generating markdown...');
+      generated = await generateMarkdown({
+        title: 'Manual Content',
+        content: rawContent,
+        originalUrl: sourceUrl
+      });
+    } else {
+      if (!url) return res.status(400).json({ error: 'url is required for URL auto-publish' });
+
+      sourceUrl = url;
+      logger.info(`API: Auto-publish URL. Starting scrape for URL: ${url}`);
+      const scrapedData = await scrapeUrl(url);
+
+      logger.info('API: Auto-publish URL. Generating markdown...');
+      generated = await generateMarkdown(scrapedData);
+    }
+
+    const { targetPlatforms, results } = await publishToPlatforms({
+      sourceUrl,
+      title: generated.title,
+      content: generated.content,
+      tags: generated.tags,
+      excerpt: generated.excerpt,
+      platforms,
+      publishStatus: normalizedStatus
+    });
+
+    res.json({
+      success: true,
+      mode: mode === 'manual' ? 'manual' : 'url',
+      platforms: targetPlatforms,
+      title: generated.title,
+      content: generated.content,
+      tags: generated.tags,
+      excerpt: generated.excerpt,
+      originalUrl: sourceUrl,
+      results
+    });
+  } catch (error: any) {
+    logger.error('API /api/auto-publish Error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/api/bulk-publish', upload.single('file'), (req, res) => {
+  try {
+    const { platforms, publishStatus } = req.body;
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    let parsedPlatforms = platforms;
+    try {
+      if (typeof platforms === 'string') parsedPlatforms = JSON.parse(platforms);
+    } catch(e) {}
+
+    const targetPlatforms = resolveTargetPlatforms(parsedPlatforms);
+    if (targetPlatforms.length === 0) {
+      return res.status(400).json({ error: 'No connected platforms available. Connect at least one channel in Settings first.' });
+    }
+
+    const urls: string[] = [];
+
+    fs.createReadStream(req.file.path)
+      .pipe(csv(['url']))
+      .on('data', (data) => {
+        const url = data.url || data[Object.keys(data)[0]];
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+          urls.push(url.trim());
+        }
+      })
+      .on('end', () => {
+        try { fs.unlinkSync(req.file!.path); } catch(e) {}
+
+        if (urls.length === 0) {
+          return res.status(400).json({ error: 'No valid URLs found in the CSV file.' });
+        }
+
+        processBulkQueue(urls, targetPlatforms, publishStatus === 'public' ? 'public' : 'draft');
+
+        res.json({ success: true, message: `Bulk process started for ${urls.length} URLs in the background. You can safely close this page.` });
+      });
+
+  } catch (error: any) {
+    logger.error('API /api/bulk-publish Error', error);
+    res.status(500).json({ error: error.message });
+  }
+});

@@ -272,19 +272,21 @@ export async function smartRetry<T>(
   throw lastError;
 }
 
-// 导出便捷函数，保持与原 retryOperation 兼容
 export async function retryOperation<T>(
   fn: () => Promise<T>,
   maxAttempts: number = 3,
-  baseDelayMs: number = 1000,
-  maxDelayMs: number = 10000
 ): Promise<T> {
   return smartRetry(fn, {
     maxAttemptsOverride: maxAttempts,
-    onRetry: (error, attempt, delay) => {
-      console.warn(`Attempt ${attempt} failed. Retrying in ${Math.round(delay)}ms...`);
+    onRetry: (_error, attempt, delay) => {
+      logger.warn(`[Retry] attempt ${attempt} failed, retrying in ${Math.round(delay)}ms`);
     },
   });
+}
+
+/** Resets all circuit breaker state — for test isolation only. */
+export function _resetCircuitBreakers(): void {
+  circuitBreakers.clear();
 }
 
 // 获取重试统计
