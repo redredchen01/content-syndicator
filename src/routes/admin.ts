@@ -394,35 +394,6 @@ router.get('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => 
   }
 }));
 
-// GET /api/diagnostics/setup-status — quick setup status check
-router.get('/api/diagnostics/setup-status', syncRoute((req, res) => {
-  try {
-    const profile = getProfile(db);
-    const dispatch = isReadyForDispatch(db);
-    const platforms = allAdapters.map(a => ({
-      name: a.name,
-      connected: isAdapterConnected(a),
-    }));
-
-    const connectedPlatforms = platforms.filter(p => p.connected).length;
-    const totalPlatforms = platforms.length;
-
-    res.json({
-      profileConfigured: Boolean(profile),
-      dispatchReady: dispatch.ready,
-      connectedPlatforms,
-      totalPlatforms,
-      issues: dispatch.report.errors.map(e => e.message),
-    });
-  } catch (error: any) {
-    logger.error('[Diagnostics] Setup status check failed', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Setup status check failed',
-    });
-  }
-}));
-
 // POST /api/platforms/batch-validate — validate multiple API keys in parallel
 router.post('/api/platforms/batch-validate', async (req, res) => {
   try {
