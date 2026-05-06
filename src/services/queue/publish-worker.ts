@@ -226,6 +226,7 @@ export function dispatchVariantJobs(
   variants: Variant[],
   batchId: string,
   db: Database.Database,
+  roiScores?: Map<string, number>,
 ): void {
   const now = Date.now();
   for (const variant of variants) {
@@ -243,6 +244,7 @@ export function dispatchVariantJobs(
       job_type: 'publish',
       scheduled_at: scheduledAt,
       payload: variant,
+      priority: roiScores?.get(variant.platform) ?? 0.0,
     });
   }
 }

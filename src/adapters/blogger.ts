@@ -27,7 +27,25 @@ export class BloggerAdapter extends BaseAdapter {
   private getAuthClient(): { client: AuthClient; origin: AuthOrigin } {
     if (oauthTokens.exists(db, 'blogger')) {
       try {
-        return { client: getAuthorizedClient('blogger'), origin: 'oauth' };
+        const client = getAuthorizedClient('blogger');
+        // Persist refreshed tokens — googleapis emits 'tokens' when it auto-
+        // rotates the access_token. Without this listener the new
+        // access_token (and any rotated refresh_token) would only live in
+        // memory for the current request.
+        client.on('tokens', (tokens) => {
+          try {
+            const stored = oauthTokens.get(db, 'blogger');
+            if (!stored) return;
+            oauthTokens.save(db, 'blogger', {
+              refresh_token: tokens.refresh_token ?? stored.refresh_token,
+              access_token: tokens.access_token ?? stored.access_token ?? null,
+              expires_at: tokens.expiry_date ?? stored.expires_at ?? null,
+            });
+          } catch (e) {
+            logger.warn(`[Blogger] failed to persist refreshed tokens: ${(e as Error).message}`);
+          }
+        });
+        return { client, origin: 'oauth' };
       } catch (e: any) {
         const msg = e?.message ?? String(e);
         if (/Failed to decrypt/i.test(msg)) {

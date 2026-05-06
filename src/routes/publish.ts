@@ -216,14 +216,42 @@ router.post('/api/auto-publish', asyncRoute(async (req, res) => {
     generated = await generateMarkdown(await scrapeUrl(url));
   }
 
-  const { targetPlatforms, results } = await publishService({
+  // Resolve target platforms before ROI filter (mirrors publishService internal logic)
+  let targetPlatforms: string[];
+  if (Array.isArray(platforms) && platforms.length > 0) {
+    targetPlatforms = (platforms as unknown[]).filter((p): p is string => typeof p === 'string' && p.trim() !== '');
+  } else {
+    targetPlatforms = allAdapters
+      .filter(a => !a.isBrowserAutomation || Boolean(a.canPublishAutomatically))
+      .map(a => a.name);
+  }
+
+  // ROI filter: build mock variants (one per platform) and filter low-ROI platforms
+  const mockVariants = targetPlatforms.map(platform => ({
+    variant_id: `auto_${platform}`,
+    platform,
+    persona_group: 'tech_blogger' as const,
+    title: generated.title,
+    body_markdown: generated.content,
+    anchor_words: [] as string[],
+    target_url: sourceUrl,
+    generation_status: 'ok' as const,
+  }));
+  const roiResult = filterByRoi(mockVariants, db);
+  if (roiResult.skipped.length > 0) {
+    logger.info(`[auto-publish] ROI filter skipped platforms: ${roiResult.skipped.map(s => `${s.platform}(${s.score.toFixed(2)})`).join(', ')}`);
+  }
+  const eligiblePlatforms = roiResult.eligible.map(v => v.platform);
+
+  const { targetPlatforms: usedPlatforms, results } = await publishService({
     sourceUrl, title: generated.title, content: generated.content,
-    tags: generated.tags, excerpt: generated.excerpt, platforms, publishStatus: normalizedStatus,
+    tags: generated.tags, excerpt: generated.excerpt,
+    platforms: eligiblePlatforms, publishStatus: normalizedStatus,
   });
 
   res.json({
     success: true, mode: mode === 'manual' ? 'manual' : 'url',
-    platforms: targetPlatforms, originalUrl: sourceUrl,
+    platforms: usedPlatforms, originalUrl: sourceUrl,
     title: generated.title, content: generated.content,
     tags: generated.tags, excerpt: generated.excerpt, results,
   });
@@ -288,6 +316,7 @@ import { runLint } from '../services/lint';
 import { getProfile } from '../services/brand-profile';
 import { anchorHistory } from '../db/repositories';
 import { dispatchVariantJobs } from '../services/queue/publish-worker';
+import { filterByRoi } from '../services/roi-scorer';
 
 router.post('/api/v2/generate', asyncRoute(async (req, res) => {
   const { draft, title, target_url_override } = req.body;
@@ -334,10 +363,44 @@ router.post('/api/v2/dispatch', asyncRoute(async (req, res) => {
     });
   }
 
-  dispatchVariantJobs(variants, batchId, db);
+  // ROI filter — only enqueue variants that pass the ROI threshold
+  const roiResult = filterByRoi(variants as import('../types').Variant[], db);
+
+  dispatchVariantJobs(roiResult.eligible, batchId, db, roiResult.roiScores);
 
   const jobs = publishJobs.byBatch(db, batchId);
-  res.json({ batchId, jobsCreated: jobs.length });
+  res.json({
+    batchId,
+    jobsCreated: jobs.length,
+    variants: roiResult.eligible,
+    skipped: roiResult.skipped,
+    roiEngineStatus: roiResult.engineStatus,
+  });
+}));
+
+// POST /api/v2/dispatch/override — force-enqueue skipped variants for selected platforms
+router.post('/api/v2/dispatch/override', asyncRoute(async (req, res) => {
+  const { batchId, platforms, variants } = req.body;
+  if (!batchId || !Array.isArray(platforms) || platforms.length === 0) {
+    return res.status(400).json({ error: 'batchId and platforms[] are required' });
+  }
+  if (!Array.isArray(variants) || variants.length === 0) {
+    return res.status(400).json({ error: 'variants[] are required' });
+  }
+
+  const overrideScore = 0.5;
+  const added: string[] = [];
+
+  for (const platform of platforms as string[]) {
+    const variant = (variants as import('../types').Variant[]).find(v => v.platform === platform);
+    if (!variant) continue;
+
+    const roiScores = new Map<string, number>([[platform, overrideScore]]);
+    dispatchVariantJobs([variant], batchId, db, roiScores);
+    added.push(platform);
+  }
+
+  res.json({ added });
 }));
 
 // GET /api/v2/queue — for queue status page (polled every 5s)

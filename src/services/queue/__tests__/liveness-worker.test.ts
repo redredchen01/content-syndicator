@@ -45,6 +45,7 @@ function makeJob(overrides: Partial<PublishJob> = {}): PublishJob {
     last_error: null,
     metadata_json: '{}',
     created_at: new Date().toISOString(),
+    priority: 0,
     updated_at: new Date().toISOString(),
     ...overrides,
   };

@@ -231,19 +231,14 @@ async function sendEmailDigest(toEmail: string, text: string): Promise<void> {
 export function seedDailyDigest(db: Database.Database): void {
   const today = new Date().toISOString().slice(0, 10);
   const scheduled18 = `${today}T18:00:00.000Z`;
+  const batchId = `system-${today}`;
 
-  // Only seed if no digest job exists for today
-  const existing = db
-    .prepare(
-      `SELECT id FROM publish_jobs WHERE job_type = 'daily_digest' AND DATE(scheduled_at) = ?`,
-    )
-    .get(today);
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO publish_jobs (batch_id, variant_id, platform, job_type, payload_json, scheduled_at, metadata_json)
+    VALUES (?, 'digest', 'system', 'daily_digest', '{}', ?, '{}')
+  `).run(batchId, scheduled18);
 
-  if (!existing) {
-    db.prepare(`
-      INSERT INTO publish_jobs (batch_id, variant_id, platform, job_type, payload_json, scheduled_at, metadata_json)
-      VALUES ('system', 'digest', 'system', 'daily_digest', '{}', ?, '{}')
-    `).run(scheduled18);
+  if (result.changes > 0) {
     logger.info(`[DigestJob] Seeded daily_digest job for ${today} 18:00 UTC`);
   }
 }

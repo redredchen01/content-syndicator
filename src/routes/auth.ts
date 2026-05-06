@@ -234,3 +234,16 @@ export const __test = {
   clearPendingStates: () => pendingStates.clear(),
   pendingStatesSize: () => pendingStates.size,
 };
+
+// GET /api/auth/google/status?platform=blogger — lightweight connection probe
+// (additive endpoint kept from the upstream branch's parallel work; complements
+// /api/platforms by exposing only the OAuth-status fields).
+router.get('/api/auth/google/status', (req, res) => {
+  const platform = String(req.query.platform || 'blogger').toLowerCase();
+  const token = oauthTokens.get(db, platform);
+  res.json({
+    platform,
+    connected: !!token,
+    expires_at: token?.expires_at ?? null,
+  });
+});

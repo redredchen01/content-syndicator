@@ -250,6 +250,8 @@ describe('API Adapter testConnection()', () => {
       process.env.BLOGGER_BLOG_ID = 'blog123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
+      // BloggerAdapter prefers OAuth2 user tokens (DB) > service-account JSON (env).
+      // When neither is present it prompts the user to connect via OAuth.
       expect(result.error).toMatch(/Connect with Google|GOOGLE_APPLICATION_CREDENTIALS_JSON/);
     });
   });

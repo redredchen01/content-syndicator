@@ -10,6 +10,8 @@ import { runPrecheck } from '../services/anchor-monitor';
 import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
 import { encryptApiKey, decryptApiKey } from '../utils/encryption';
+import { computePlatformHealth, getDaTierConfig } from '../services/roi-scorer';
+import { MVP_PLATFORMS } from '../constants';
 import {
   AUTH_DIR,
   getBrowserAuthMode,
@@ -437,6 +439,84 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
     });
   }
 });
+
+// GET /api/v2/platform-health — ROI health for all 7 MVP platforms
+router.get('/api/v2/platform-health', syncRoute((_req, res) => {
+  try {
+    const health = computePlatformHealth(db);
+    return res.json(health);
+  } catch (err) {
+    logger.error('[Admin] computePlatformHealth failed, returning insufficient fallback', {
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    const fallback = (MVP_PLATFORMS as readonly string[]).map((platform) => ({
+      platform,
+      daTierLabel: 'Tier3' as const,
+      daTierScore: 0.3,
+      t7dRate: null,
+      t30dRate: null,
+      roiScore: 0.3,
+      score: 0.3,
+      status: 'insufficient' as const,
+      dataInsufficient: true,
+      coldStart: true,
+    }));
+    return res.json(fallback);
+  }
+}));
+
+const VALID_TIER_SCORES = new Set([0.3, 0.6, 1.0]);
+
+// PATCH /api/v2/roi-config — update DA tier config and threshold
+router.patch('/api/v2/roi-config', syncRoute((req, res) => {
+  const { daTierConfig, threshold } = req.body ?? {};
+
+  // Validate threshold
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    return res.status(400).json({ error: 'threshold must be a number between 0 and 1' });
+  }
+
+  // Validate daTierConfig values
+  if (daTierConfig !== undefined && typeof daTierConfig === 'object' && daTierConfig !== null) {
+    for (const [key, val] of Object.entries(daTierConfig as Record<string, unknown>)) {
+      // Validate platform key
+      if (!(MVP_PLATFORMS as readonly string[]).includes(key)) {
+        return res.status(400).json({ error: `Unknown platform: ${key}` });
+      }
+      // Validate tier score value (explicit typeof prevents type coercion attacks)
+      if (typeof val !== 'number' || !VALID_TIER_SCORES.has(val)) {
+        return res.status(400).json({ error: `Invalid tier score for ${key}: must be 0.3, 0.6, or 1.0` });
+      }
+    }
+  }
+
+  // Read existing row
+  const row = db.prepare(
+    `SELECT da_tier_config_json, roi_threshold FROM brand_profiles WHERE brand_id = 'main' LIMIT 1`
+  ).get() as { da_tier_config_json?: string; roi_threshold?: number | null } | undefined;
+
+  if (!row) {
+    return res.status(400).json({ error: 'Brand profile not configured' });
+  }
+
+  // Merge DA tier config
+  let existingTiers: Record<string, number> = {};
+  try {
+    existingTiers = row.da_tier_config_json ? JSON.parse(row.da_tier_config_json) : {};
+  } catch {
+    existingTiers = {};
+  }
+  const mergedTiers = { ...existingTiers, ...(daTierConfig ?? {}) };
+
+  db.prepare(
+    `UPDATE brand_profiles SET da_tier_config_json = ?, roi_threshold = ? WHERE brand_id = 'main'`
+  ).run(JSON.stringify(mergedTiers), threshold);
+
+  logger.info(`[Admin] Updated ROI config: threshold=${threshold}`);
+
+  return res.json({ daTierConfig: mergedTiers, threshold });
+}));
 
 // PATCH /api/v2/brand-profile/preferred-platforms — update preferred publishing platforms
 router.patch('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {

@@ -87,16 +87,13 @@ export function seedSheetsJobs(db: Database.Database): void {
   ] as const;
 
   for (const { type, hour } of jobs) {
-    const existing = db
-      .prepare(`SELECT id FROM publish_jobs WHERE job_type = ? AND DATE(scheduled_at) = ?`)
-      .get(type, today);
-
-    if (!existing) {
-      const scheduledAt = `${today}T${hour}:00.000Z`;
-      db.prepare(`
-        INSERT INTO publish_jobs (batch_id, variant_id, platform, job_type, payload_json, scheduled_at, metadata_json)
-        VALUES ('system', ?, 'system', ?, '{}', ?, '{}')
-      `).run(type, type, scheduledAt);
+    const scheduledAt = `${today}T${hour}:00.000Z`;
+    const batchId = `system-${today}`;
+    const result = db.prepare(`
+      INSERT OR IGNORE INTO publish_jobs (batch_id, variant_id, platform, job_type, payload_json, scheduled_at, metadata_json)
+      VALUES (?, ?, 'system', ?, '{}', ?, '{}')
+    `).run(batchId, type, type, scheduledAt);
+    if (result.changes > 0) {
       logger.info(`[SheetsJobs] Seeded ${type} job for ${today} ${hour} UTC`);
     }
   }
