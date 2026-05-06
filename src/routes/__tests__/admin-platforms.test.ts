@@ -163,12 +163,14 @@ describe('POST /api/platforms/batch-validate — process.env restoration', () =>
 });
 
 describe('Platform status persistence', () => {
-  it('platform status is stored in database', async () => {
-    // Verify database initialization
-    const result = db.prepare('SELECT api_keys_encrypted, platform_test_status FROM brand_profiles LIMIT 1').get();
-
-    // The table should exist but fields might not be populated yet
-    expect(result).toBeDefined();
+  it('brand_profiles table exists with required columns', async () => {
+    // Verify the schema has the expected columns (table may be empty on a fresh DB)
+    const cols = db
+      .prepare(`SELECT name FROM pragma_table_info('brand_profiles')`)
+      .all() as Array<{ name: string }>;
+    const colNames = cols.map(c => c.name);
+    expect(colNames).toContain('api_keys_encrypted');
+    expect(colNames).toContain('platform_test_status');
   });
 
   it('subsequent requests reflect stored status', async () => {
