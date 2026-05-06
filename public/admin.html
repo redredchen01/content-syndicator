@@ -706,15 +706,22 @@
 
         let actionBtn;
         if (p.supportsOAuth) {
+          // Provider-specific URL path and button label come from /api/platforms.
+          const provider = p.oauthProviderId || 'google';
+          const label = p.oauthProviderLabel || 'Google';
+          const startUrl = `/api/auth/${provider}/start?platform=${p.id}`;
+          const tooltipEnv = provider === 'twitter'
+            ? 'TWITTER_OAUTH_CLIENT_ID / TWITTER_OAUTH_CLIENT_SECRET / TWITTER_OAUTH_REDIRECT_URI'
+            : 'GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / OAUTH_REDIRECT_URI';
           if (!p.oauthConfigured) {
             actionBtn = `<button type="button" disabled
                          class="ml-2 px-3 py-1 text-sm border border-slate-200 rounded bg-slate-50 text-slate-400 cursor-not-allowed"
-                         title="请在 .env 配置 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / OAUTH_REDIRECT_URI">
-                         Connect with Google
+                         title="请在 .env 配置 ${tooltipEnv}">
+                         Connect with ${label}
                        </button>`;
           } else if (p.oauthConnected) {
             actionBtn = `<div class="flex gap-2">
-                         <a href="/api/auth/google/start?platform=${p.id}"
+                         <a href="${startUrl}"
                             class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50">
                            重新授权
                          </a>
@@ -725,9 +732,9 @@
                          </button>
                        </div>`;
           } else {
-            actionBtn = `<a href="/api/auth/google/start?platform=${p.id}"
+            actionBtn = `<a href="${startUrl}"
                           class="ml-2 px-3 py-1 text-sm border border-blue-300 text-blue-700 rounded hover:bg-blue-50">
-                          Connect with Google
+                          Connect with ${label}
                         </a>`;
           }
         } else if (p.browserAutomation) {
