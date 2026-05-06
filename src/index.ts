@@ -55,6 +55,31 @@ setTimeout(() => {
   );
 }, 10000);
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🚀 Web UI is running at: http://localhost:${PORT}\n`);
 });
+
+// ── Graceful shutdown ──────────────────────────────────────────────────────
+// Without this, SIGTERM from pm2 / Docker / launchd leaves the scheduler's
+// setInterval and the credential-validation timer running until force-kill.
+// In-flight 'running' jobs also stay zombie until the next startup sweep.
+function shutdown(signal: string): void {
+  logger.info(`[Server] ${signal} received — shutting down`);
+  scheduler.stop(); // clears tick + zombie-sweep timers
+  if (credentialValidationInterval) {
+    clearInterval(credentialValidationInterval);
+    credentialValidationInterval = null;
+  }
+  server.close(() => {
+    logger.info('[Server] HTTP server closed — exiting');
+    process.exit(0);
+  });
+  // Force exit if HTTP server doesn't drain within 10 s (in-flight requests)
+  setTimeout(() => {
+    logger.warn('[Server] Forcing exit after 10 s drain timeout');
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
