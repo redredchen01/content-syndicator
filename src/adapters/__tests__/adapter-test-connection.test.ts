@@ -95,6 +95,15 @@ describe('API Adapter testConnection()', () => {
   describe('Medium Adapter', () => {
     const adapter = new MediumAdapter();
 
+    // Browser-fallback path checks for .auth/medium.json — if a parallel test
+    // file leaves one behind, our 'no token' assertions match the wrong path.
+    beforeEach(async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const authFile = path.join(process.cwd(), '.auth', 'medium.json');
+      if (fs.existsSync(authFile)) fs.unlinkSync(authFile);
+    });
+
     it('returns ok=true when token is valid', async () => {
       process.env.MEDIUM_INTEGRATION_TOKEN = 'Bearer token123';
       (global.fetch as any).mockResolvedValueOnce({

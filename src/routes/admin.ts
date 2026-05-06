@@ -18,11 +18,8 @@ import {
   getAdapterId,
   createBrowserAuthContext,
 } from '../services/browser-session';
-import { isOAuthConfigured } from '../services/google-oauth';
+import { isOAuthConfigured, isOAuthSupported } from '../services/google-oauth';
 import { oauthTokens } from '../db/oauth-tokens';
-
-// Platforms that support real Google OAuth 2.0 user-flow.
-const OAUTH_SUPPORTED_PLATFORMS = new Set(['Blogger']);
 
 export { getAdapterId, hasSavedBrowserSession };
 
@@ -61,7 +58,7 @@ function isAdapterConnected(adapter: PlatformAdapter): boolean {
   if (adapterConnected) return true;
   if (hasStoredApiKey(getAdapterId(adapter))) return true;
   // OAuth user-flow: a stored refresh_token in oauth_tokens counts as connected
-  if (OAUTH_SUPPORTED_PLATFORMS.has(adapter.name) && oauthTokens.exists(db, getAdapterId(adapter))) {
+  if (isOAuthSupported(adapter.name) && oauthTokens.exists(db, getAdapterId(adapter))) {
     return true;
   }
   // Hybrid (Medium): a saved browser session + browser automation enabled
@@ -123,7 +120,7 @@ router.get('/api/platforms', syncRoute((req, res) => {
   const oauthConfigured = isOAuthConfigured();
   const platforms = allAdapters.map(a => {
     const id = getAdapterId(a);
-    const supportsOAuth = OAUTH_SUPPORTED_PLATFORMS.has(a.name);
+    const supportsOAuth = isOAuthSupported(a.name);
     const oauthConnected = supportsOAuth && oauthTokens.exists(db, id);
     return {
       name: a.name,

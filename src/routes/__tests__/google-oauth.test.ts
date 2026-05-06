@@ -79,15 +79,18 @@ describe('Google OAuth routes', () => {
       expect(res.headers.location).toMatch(/oauth_error=access_denied/);
     });
 
-    it('returns 400 with no code or state', async () => {
-      const res = await request(app).get('/api/auth/google/callback');
-      expect(res.status).toBe(400);
+    it('redirects with missing_code_or_state when params absent', async () => {
+      const res = await request(app).get('/api/auth/google/callback').redirects(0);
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/oauth_error=missing_code_or_state/);
     });
 
-    it('returns 400 for invalid state', async () => {
-      const res = await request(app).get('/api/auth/google/callback?code=x&state=invalid');
-      expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(/Invalid or expired state/);
+    it('redirects with invalid_state for unknown state', async () => {
+      const res = await request(app)
+        .get('/api/auth/google/callback?code=x&state=invalid')
+        .redirects(0);
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/oauth_error=invalid_state/);
     });
 
     it('rejects state on second use (one-shot)', async () => {
@@ -106,11 +109,12 @@ describe('Google OAuth routes', () => {
       expect(first.status).toBe(302);
       expect(first.headers.location).toBe('/admin.html?connected=blogger');
 
-      // Second use must fail
+      // Second use redirects with invalid_state (state was deleted on first use)
       const second = await request(app)
         .get(`/api/auth/google/callback?code=valid&state=${state}`)
         .redirects(0);
-      expect(second.status).toBe(400);
+      expect(second.status).toBe(302);
+      expect(second.headers.location).toMatch(/oauth_error=invalid_state/);
     });
 
     it('persists tokens on successful callback', async () => {
@@ -129,7 +133,7 @@ describe('Google OAuth routes', () => {
       expect(stored?.refresh_token).toBe('persisted-r');
     });
 
-    it('redirects with oauth_error when token exchange fails', async () => {
+    it('redirects with stable error code when token exchange fails', async () => {
       const state = await startAndCaptureState();
       const googleapis = await import('googleapis');
       vi.spyOn(googleapis.google.auth.OAuth2.prototype, 'getToken').mockRejectedValue(
@@ -140,7 +144,23 @@ describe('Google OAuth routes', () => {
         .get(`/api/auth/google/callback?code=bad&state=${state}`)
         .redirects(0);
       expect(res.status).toBe(302);
-      expect(res.headers.location).toMatch(/oauth_error=invalid_grant/);
+      // Full error message stays in server logs; URL gets a short stable code
+      expect(res.headers.location).toMatch(/oauth_error=exchange_failed/);
+    });
+
+    it('redirects with no_refresh_token when Google omits refresh_token', async () => {
+      const state = await startAndCaptureState();
+      const googleapis = await import('googleapis');
+      vi.spyOn(googleapis.google.auth.OAuth2.prototype, 'getToken').mockResolvedValue({
+        tokens: { access_token: 'a-only' },
+        res: null,
+      } as any);
+
+      const res = await request(app)
+        .get(`/api/auth/google/callback?code=c&state=${state}`)
+        .redirects(0);
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/oauth_error=no_refresh_token/);
     });
   });
 

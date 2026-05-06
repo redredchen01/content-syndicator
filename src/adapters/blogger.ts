@@ -3,10 +3,8 @@ import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { db } from '../db';
 import { oauthTokens } from '../db/oauth-tokens';
-import { getAuthorizedClient } from '../services/google-oauth';
+import { BLOGGER_OAUTH_SCOPES, getAuthorizedClient } from '../services/google-oauth';
 import { logger } from '../utils/logger';
-
-const BLOGGER_SCOPES = ['https://www.googleapis.com/auth/blogger'];
 
 type AuthOrigin = 'oauth' | 'service-account';
 type AuthClient = OAuth2Client | InstanceType<typeof google.auth.GoogleAuth>;
@@ -26,9 +24,18 @@ export class BloggerAdapter extends BaseAdapter {
     }
     const credsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
     if (credsJson) {
+      let credentials: object;
+      try {
+        credentials = JSON.parse(credsJson);
+      } catch (e: any) {
+        throw new Error(
+          'GOOGLE_APPLICATION_CREDENTIALS_JSON is not valid JSON. Re-export the ' +
+          'service-account key from Google Cloud Console: ' + (e?.message ?? String(e)),
+        );
+      }
       const auth = new google.auth.GoogleAuth({
-        credentials: JSON.parse(credsJson),
-        scopes: BLOGGER_SCOPES,
+        credentials,
+        scopes: BLOGGER_OAUTH_SCOPES,
       });
       return { client: auth, origin: 'service-account' };
     }
@@ -38,8 +45,13 @@ export class BloggerAdapter extends BaseAdapter {
     );
   }
 
-  /** Detects revoked/invalid OAuth grants so callers can clear stale rows. */
+  /** Detects revoked/invalid OAuth grants so callers can clear stale rows.
+   *  Checks googleapis' structured error fields first; falls back to message
+   *  regex for older library versions or wrapped errors. */
   private isInvalidGrantError(err: unknown): boolean {
+    const e = err as { response?: { data?: { error?: string } }; code?: string; message?: string };
+    if (e?.response?.data?.error === 'invalid_grant') return true;
+    if (e?.code === 'invalid_grant') return true;
     const msg = err instanceof Error ? err.message : String(err);
     return /invalid_grant|invalid_token|Token has been expired or revoked/i.test(msg);
   }
@@ -59,7 +71,7 @@ export class BloggerAdapter extends BaseAdapter {
     }
 
     try {
-      const blogger = google.blogger({ version: 'v3', auth: auth as any });
+      const blogger = google.blogger({ version: 'v3', auth });
       await blogger.blogs.get({ blogId });
       return { ok: true };
     } catch (error: any) {
@@ -89,7 +101,7 @@ export class BloggerAdapter extends BaseAdapter {
     }
 
     try {
-      const blogger = google.blogger({ version: 'v3', auth: auth as any });
+      const blogger = google.blogger({ version: 'v3', auth });
 
       const htmlContent = `<div>
 ${markdownContent.split('\n').map(line => `<p>${line}</p>`).join('\n')}

@@ -17,6 +17,21 @@ import { oauthTokens } from '../db/oauth-tokens';
 
 export const BLOGGER_OAUTH_SCOPES = ['https://www.googleapis.com/auth/blogger'];
 
+/**
+ * Single source of truth for Google OAuth-supported platforms. Keyed by the
+ * adapter id (lowercase, [a-z0-9]). Both the route layer (auth.ts) and the
+ * platform-status layer (admin.ts) read from this map so adding a new OAuth
+ * platform only requires one edit.
+ */
+export const OAUTH_PLATFORM_REGISTRY: Record<string, { displayName: string; scopes: string[] }> = {
+  blogger: { displayName: 'Blogger', scopes: BLOGGER_OAUTH_SCOPES },
+};
+
+/** True when the adapter (by display name) supports Google OAuth. */
+export function isOAuthSupported(adapterName: string): boolean {
+  return Object.values(OAUTH_PLATFORM_REGISTRY).some(p => p.displayName === adapterName);
+}
+
 /** Returns true only when all three required env vars are set. */
 export function isOAuthConfigured(): boolean {
   return Boolean(

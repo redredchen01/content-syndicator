@@ -5,7 +5,7 @@
  * access_token is short-lived; stored plaintext for log-debug value only —
  * googleapis OAuth2Client refreshes it transparently when expired.
  *
- * Schema lives in src/db/schema.ts L228–239 (oauth_tokens table).
+ * Schema: see oauth_tokens table in src/db/schema.ts.
  */
 
 import type Database from 'better-sqlite3';
