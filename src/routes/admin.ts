@@ -20,7 +20,16 @@ import {
   getAdapterId,
   createBrowserAuthContext,
 } from '../services/browser-session';
-import { isOAuthConfigured, isOAuthSupported } from '../services/google-oauth';
+import { isOAuthConfigured } from '../services/google-oauth';
+// Importing twitter-oauth registers twitterAuthStrategy for the platform
+// status endpoint to see Twitter as OAuth-supported even when admin.ts is
+// loaded before any route file imports twitter-oauth.
+import '../services/twitter-oauth';
+import {
+  isOAuthSupported,
+  getStrategyByAdapter,
+  getOAuthProviderLabel,
+} from '../services/auth-strategy';
 import { oauthTokens } from '../db/oauth-tokens';
 
 export { getAdapterId, hasSavedBrowserSession };
@@ -119,10 +128,12 @@ export function resolveTargetPlatforms(platforms?: unknown) {
 }
 
 router.get('/api/platforms', syncRoute((req, res) => {
-  const oauthConfigured = isOAuthConfigured();
   const platforms = allAdapters.map(a => {
     const id = getAdapterId(a);
-    const supportsOAuth = isOAuthSupported(a.name);
+    const strategy = getStrategyByAdapter(a.name);
+    const supportsOAuth = strategy != null;
+    // Per-provider isConfigured — different providers have different env vars.
+    const oauthConfigured = strategy ? strategy.isConfigured() : false;
     const oauthConnected = supportsOAuth && oauthTokens.exists(db, id);
     return {
       name: a.name,
@@ -132,8 +143,10 @@ router.get('/api/platforms', syncRoute((req, res) => {
       browserAuthSupported: Boolean(a.isBrowserAutomation || a.supportsBrowserFallback),
       canPublishAutomatically: Boolean(a.canPublishAutomatically || !a.isBrowserAutomation),
       supportsOAuth,
-      oauthConfigured: supportsOAuth ? oauthConfigured : false,
+      oauthConfigured,
       oauthConnected,
+      oauthProviderId: strategy?.providerId ?? null,
+      oauthProviderLabel: getOAuthProviderLabel(a.name),
       supportsBrowserFallback: Boolean(a.supportsBrowserFallback),
       browserSessionExists: hasSavedBrowserSession(a),
     };

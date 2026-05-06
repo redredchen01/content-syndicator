@@ -56,6 +56,17 @@ describe('GET /api/platforms', () => {
     expect(blogger.supportsOAuth).toBe(true);
     expect(typeof blogger.oauthConfigured).toBe('boolean');
     expect(typeof blogger.oauthConnected).toBe('boolean');
+    expect(blogger.oauthProviderId).toBe('google');
+    expect(blogger.oauthProviderLabel).toBe('Google');
+  });
+
+  it('marks Twitter as supportsOAuth with providerId=twitter and label=X', async () => {
+    const res = await request(app).get('/api/platforms');
+    const twitter = res.body.platforms.find((p: any) => p.name === 'Twitter');
+    expect(twitter).toBeDefined();
+    expect(twitter.supportsOAuth).toBe(true);
+    expect(twitter.oauthProviderId).toBe('twitter');
+    expect(twitter.oauthProviderLabel).toBe('X');
   });
 
   it('marks Medium as supportsBrowserFallback', async () => {
