@@ -115,6 +115,53 @@ describe('PATCH /api/platforms/:platformId/api-key', () => {
   });
 });
 
+// ── process.env restoration ───────────────────────────────────────────────────
+// These tests guard against the pre-existing bug where `process.env = originalEnv`
+// was used (which is a no-op in Node.js), causing test keys to leak into the
+// process environment.
+
+describe('PATCH /api/platforms/:id/api-key — process.env restoration', () => {
+  afterEach(() => {
+    delete process.env.DEVTO_API_KEY;
+  });
+
+  it('restores process.env on validation failure (422) — no key leak', async () => {
+    const valueBefore = process.env.DEVTO_API_KEY;
+
+    const res = await request(app)
+      .patch('/api/platforms/devto/api-key')
+      .send({ apiKey: 'obviously-invalid-key-for-env-leak-test' });
+
+    if (res.status === 422) {
+      // Key should be restored to whatever it was before the request
+      expect(process.env.DEVTO_API_KEY).toBe(valueBefore);
+    }
+    // If 200, the new key was intentionally stored — no check needed
+  });
+});
+
+describe('POST /api/platforms/batch-validate — process.env restoration', () => {
+  let savedDevtoKey: string | undefined;
+
+  beforeEach(() => {
+    savedDevtoKey = process.env.DEVTO_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedDevtoKey === undefined) delete process.env.DEVTO_API_KEY;
+    else process.env.DEVTO_API_KEY = savedDevtoKey;
+  });
+
+  it('restores all env vars after batch validation completes', async () => {
+    const keyBefore = process.env.DEVTO_API_KEY;
+
+    await request(app).post('/api/platforms/batch-validate');
+
+    // process.env must return to pre-test state regardless of test outcome
+    expect(process.env.DEVTO_API_KEY).toBe(keyBefore);
+  });
+});
+
 describe('Platform status persistence', () => {
   it('platform status is stored in database', async () => {
     // Verify database initialization

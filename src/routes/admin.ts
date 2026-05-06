@@ -264,11 +264,8 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
 
     logger.info(`[Admin] Testing API key for ${adapter.name}...`);
 
-    // Validate API key by calling testConnection()
-    // Temporarily set the environment variable for testing
-    const originalEnv = { ...process.env };
-
-    // Map platformId to environment variable name
+    // Validate API key by calling testConnection() with the new key.
+    // Map platformId to the environment variable it reads from.
     const envKeyMap: Record<string, string> = {
       'devto': 'DEVTO_API_KEY',
       'medium': 'MEDIUM_INTEGRATION_TOKEN',
@@ -284,17 +281,25 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
       return res.status(404).json({ error: 'Cannot validate this platform type' });
     }
 
+    const prevValue = process.env[envVar]; // capture before overwriting
     process.env[envVar] = apiKey;
 
-    const testResult = await adapter.testConnection?.();
-
-    // Restore original env
-    process.env = originalEnv;
+    let testResult: Awaited<ReturnType<NonNullable<typeof adapter.testConnection>>>;
+    try {
+      testResult = await adapter.testConnection?.();
+    } catch (e: any) {
+      // Restore on unexpected throw; on validation failure we restore below too
+      if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
+      throw e; // re-throw so asyncRoute returns 500
+    }
 
     if (testResult && !testResult.ok) {
+      // Validation failed — restore the previous key so process.env stays clean
+      if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
       logger.warn(`[Admin] API key validation failed for ${adapter.name}: ${testResult.error}`);
       return res.status(422).json({ ok: false, error: testResult.error });
     }
+    // Success: keep the new key in process.env (it is now the active credential)
 
     // Encrypt and store API key
     const encrypted = encryptApiKey(apiKey);
@@ -414,7 +419,6 @@ router.post('/api/platforms/batch-validate', async (req, res) => {
         }
 
         logger.info(`[Admin] Testing API key for ${adapter.name}...`);
-        const originalEnv = { ...process.env };
 
         const envKeyMap: Record<string, string> = {
           'devto': 'DEVTO_API_KEY',
@@ -431,15 +435,19 @@ router.post('/api/platforms/batch-validate', async (req, res) => {
           return { platformId, ok: false, error: 'Cannot validate this platform type' };
         }
 
+        // Batch-validate only tests — always restore the original value afterward.
+        const prevValue = process.env[envVar];
         process.env[envVar] = apiKey;
-        const testResult = await adapter.testConnection?.();
-        process.env = originalEnv;
-
-        return {
-          platformId,
-          ok: testResult?.ok ?? true,
-          error: testResult?.error,
-        };
+        try {
+          const testResult = await adapter.testConnection?.();
+          return {
+            platformId,
+            ok: testResult?.ok ?? true,
+            error: testResult?.error,
+          };
+        } finally {
+          if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
+        }
       }),
     );
 
