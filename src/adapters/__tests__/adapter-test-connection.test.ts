@@ -224,28 +224,25 @@ describe('API Adapter testConnection()', () => {
   describe('Blogger Adapter', () => {
     const adapter = new BloggerAdapter();
 
-    it('returns error when credentials are missing', async () => {
+    it('returns error when blog ID is missing', async () => {
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/BLOGGER_BLOG_ID/);
     });
 
-    it('returns error when only credentials are provided', async () => {
+    it('returns error when blog ID is missing even with service-account creds', async () => {
       process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = '{}';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/BLOGGER_BLOG_ID/);
     });
 
-    it('returns error when only blog ID is provided', async () => {
+    it('returns Chinese auth-hint when blog ID set but no auth source', async () => {
       process.env.BLOGGER_BLOG_ID = 'blog123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/Connect with Google|GOOGLE_APPLICATION_CREDENTIALS_JSON/);
     });
-
-    // Note: Full test would require mocking googleapis library
-    // Skipping auth tests as they require complex googleapis mocking
   });
 
   describe('WordPress Adapter', () => {
