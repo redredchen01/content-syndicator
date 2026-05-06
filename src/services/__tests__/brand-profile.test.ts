@@ -2,9 +2,11 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyV2Schema } from '../../db/schema';
 import {
+  getPreferredPlatforms,
   getProfile,
   isReadyForDispatch,
   saveProfile,
+  updatePreferredPlatforms,
   validateForDispatch,
   validateForSave,
 } from '../brand-profile';
@@ -212,6 +214,42 @@ describe('saveProfile (adversarial F7 protection)', () => {
     saveProfile(db, { name: 'B' });
     const rows = db.prepare('SELECT * FROM brand_profiles').all();
     expect(rows).toHaveLength(1);
+  });
+});
+
+describe('updatePreferredPlatforms + getPreferredPlatforms round-trip', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+    // Create the 'main' row that updatePreferredPlatforms targets
+    saveProfile(db, { name: 'Test' });
+  });
+  afterEach(() => db.close());
+
+  it('writes platforms and reads them back', () => {
+    const r = updatePreferredPlatforms(db, ['github', 'medium']);
+    expect(r.ok).toBe(true);
+    expect(getPreferredPlatforms(db)).toEqual(['github', 'medium']);
+  });
+
+  it('overwrites on repeated calls — only latest value persists', () => {
+    updatePreferredPlatforms(db, ['github', 'medium']);
+    updatePreferredPlatforms(db, ['twitter']);
+    expect(getPreferredPlatforms(db)).toEqual(['twitter']);
+  });
+
+  it('rejects empty array — returns error, DB unchanged', () => {
+    updatePreferredPlatforms(db, ['github']);
+    const r = updatePreferredPlatforms(db, []);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/至少选择一个/);
+    // DB value unchanged
+    expect(getPreferredPlatforms(db)).toEqual(['github']);
+  });
+
+  it('rejects non-array input', () => {
+    const r = updatePreferredPlatforms(db, null as unknown as string[]);
+    expect(r.ok).toBe(false);
   });
 });
 
