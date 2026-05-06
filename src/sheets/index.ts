@@ -191,9 +191,8 @@ export class GoogleSheetsClient implements SheetsClient {
   }
 
   async refreshAggregates(): Promise<void> {
-    // No-op stub for now — will be fully implemented when all data
-    // flows are wired and we have real post volume to aggregate.
-    logger.info('[Sheets] refreshAggregates: no-op pending data volume');
+    // Not yet implemented — pending aggregate tab format decision and sufficient post volume (>50).
+    logger.warn('[Sheets] refreshAggregates: not yet implemented — sheet aggregates will not be updated');
   }
 
   async reconcileWithSqlite(
