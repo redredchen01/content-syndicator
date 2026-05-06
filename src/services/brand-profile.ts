@@ -250,7 +250,7 @@ export function updatePreferredPlatforms(
     db.prepare(`
       UPDATE brand_profiles
       SET preferred_platforms_json = ?, updated_at = ?
-      WHERE brand_id = 'default'
+      WHERE brand_id = 'main'
     `).run(JSON.stringify(platforms), now);
 
     return { ok: true };

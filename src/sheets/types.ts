@@ -70,16 +70,31 @@ export interface SheetsClient {
 }
 
 /**
- * No-op stub for Unit 10/13 to import while Unit 12b is not yet wired.
- * All methods are async no-ops — no failures, no side-effects.
+ * No-op fallback used when GOOGLE_APPLICATION_CREDENTIALS_JSON or
+ * GOOGLE_SHEET_ID is not configured.  All write methods are silent no-ops
+ * so the rest of the system degrades gracefully instead of crashing.
+ *
+ * Each method emits a one-time console.warn so operators know Sheets
+ * integration is inactive — but only once per process to avoid log spam.
  */
 export class NopSheetsClient implements SheetsClient {
+  private static _warned = false;
+
+  private static _warnOnce(): void {
+    if (NopSheetsClient._warned) return;
+    NopSheetsClient._warned = true;
+    console.warn(
+      '[Sheets] NopSheetsClient active — GOOGLE_APPLICATION_CREDENTIALS_JSON or ' +
+      'GOOGLE_SHEET_ID is not configured. Sheets writes are disabled.',
+    );
+  }
+
   async appendRow(_range: string, _values: string[]): Promise<void> {
-    // no-op stub
+    NopSheetsClient._warnOnce();
   }
 
   async appendPost(_row: PostRow): Promise<void> {
-    // no-op stub — replaced by GoogleSheetsClient in Unit 12b
+    NopSheetsClient._warnOnce();
   }
 
   async updateLiveness(
@@ -88,16 +103,16 @@ export class NopSheetsClient implements SheetsClient {
     _column: LivenessColumn,
     _value: string,
   ): Promise<void> {
-    // no-op stub
+    NopSheetsClient._warnOnce();
   }
 
   async refreshAggregates(): Promise<void> {
-    // no-op stub
+    NopSheetsClient._warnOnce();
   }
 
   async reconcileWithSqlite(
     _sqliteRows: Array<{ batch_id: string; platform: string; published_url: string }>,
   ): Promise<void> {
-    // no-op stub
+    NopSheetsClient._warnOnce();
   }
 }

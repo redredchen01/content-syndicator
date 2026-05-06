@@ -100,6 +100,15 @@ export async function handlePublishJob(job: PublishJob, db: Database.Database): 
       Object.assign(err, { errorType: errType });
       throw err;
     }
+    if (!result.publishedUrl) {
+      // Adapter returned success but no publishedUrl — use target_url as a
+      // best-effort fallback. This makes idempotency and liveness checks
+      // unreliable, so log a warn so the gap is visible in ops dashboards.
+      logger.warn(
+        `[PublishWorker] ${job.platform} succeeded but returned no publishedUrl ` +
+        `— falling back to target_url. Idempotency and liveness checks may be impaired.`,
+      );
+    }
     publishedUrl = result.publishedUrl ?? variant.target_url;
   } catch (err: any) {
     // Re-classify and re-throw so Scheduler can route to retryable/terminal

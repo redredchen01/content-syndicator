@@ -118,13 +118,15 @@ function formatDigest(stats: DailyStats): string {
 // -----------------------------------------------------------------------
 
 async function sendTelegramDigest(token: string, text: string): Promise<void> {
-  // token format: "bot<token>:<chatId>"
-  const [botPart, chatId] = token.split(':');
-  if (!botPart || !chatId) {
+  // token format: "bot<id>:<hash>:<chatId>" (full token) or "bot<id>:<chatId>" (legacy)
+  // Use lastIndexOf to correctly split full tokens that contain an internal colon.
+  const lastColon = token.lastIndexOf(':');
+  const chatId = lastColon >= 0 ? token.slice(lastColon + 1) : '';
+  const botToken = lastColon >= 0 ? token.slice(0, lastColon).replace(/^bot/, '') : '';
+  if (!botToken || !chatId) {
     logger.warn('[DigestJob] Invalid Telegram token format (expected "bot<token>:<chatId>")');
     return;
   }
-  const botToken = botPart.replace(/^bot/, '');
   try {
     const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: 'POST',
