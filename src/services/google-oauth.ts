@@ -1,5 +1,5 @@
 /**
- * Google OAuth 2.0 user-flow helper.
+ * Google OAuth 2.0 user-flow strategy.
  *
  * Centralizes OAuth2Client construction so routes and adapters all use the
  * same client config. googleapis' OAuth2Client refreshes access_tokens
@@ -14,23 +14,13 @@ import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import { db } from '../db';
 import { oauthTokens } from '../db/oauth-tokens';
+import {
+  AuthStrategy,
+  ExchangedTokens,
+  registerStrategy,
+} from './auth-strategy';
 
 export const BLOGGER_OAUTH_SCOPES = ['https://www.googleapis.com/auth/blogger'];
-
-/**
- * Single source of truth for Google OAuth-supported platforms. Keyed by the
- * adapter id (lowercase, [a-z0-9]). Both the route layer (auth.ts) and the
- * platform-status layer (admin.ts) read from this map so adding a new OAuth
- * platform only requires one edit.
- */
-export const OAUTH_PLATFORM_REGISTRY: Record<string, { displayName: string; scopes: string[] }> = {
-  blogger: { displayName: 'Blogger', scopes: BLOGGER_OAUTH_SCOPES },
-};
-
-/** True when the adapter (by display name) supports Google OAuth. */
-export function isOAuthSupported(adapterName: string): boolean {
-  return Object.values(OAUTH_PLATFORM_REGISTRY).some(p => p.displayName === adapterName);
-}
 
 /** Returns true only when all three required env vars are set. */
 export function isOAuthConfigured(): boolean {
@@ -66,7 +56,7 @@ export function createOAuthClient(): OAuth2Client {
  * refresh_token on subsequent grants if an active grant already exists,
  * causing token-refresh failures down the line.
  */
-export function generateAuthUrl(state: string, scopes: string[]): string {
+export function generateAuthUrl(state: string, scopes: string[] = BLOGGER_OAUTH_SCOPES): string {
   const client = createOAuthClient();
   return client.generateAuthUrl({
     access_type: 'offline',
@@ -74,12 +64,6 @@ export function generateAuthUrl(state: string, scopes: string[]): string {
     scope: scopes,
     state,
   });
-}
-
-export interface ExchangedTokens {
-  refresh_token: string;
-  access_token?: string;
-  expires_at?: number;
 }
 
 /**
@@ -123,3 +107,35 @@ export function getAuthorizedClient(platform: string): OAuth2Client {
   });
   return client;
 }
+
+// ── AuthStrategy export & registration ─────────────────────────────────────
+
+export const googleAuthStrategy: AuthStrategy = {
+  providerId: 'google',
+  providerLabel: 'Google',
+  supportedAdapters: ['Blogger'],
+  defaultScopes: BLOGGER_OAUTH_SCOPES,
+
+  isConfigured: () => isOAuthConfigured(),
+
+  generateAuthUrl({ state, scopes }) {
+    return generateAuthUrl(state, scopes ?? BLOGGER_OAUTH_SCOPES);
+  },
+
+  exchangeCodeForTokens(code) {
+    return exchangeCodeForTokens(code);
+  },
+};
+
+registerStrategy(googleAuthStrategy);
+
+// ── Back-compat re-export ───────────────────────────────────────────────────
+// Existing routes/admin code references OAUTH_PLATFORM_REGISTRY directly.
+// Keep the symbol so the refactor can land in stages without breaking imports
+// — new code should consult the AuthStrategy registry instead.
+
+export const OAUTH_PLATFORM_REGISTRY: Record<string, { displayName: string; scopes: string[] }> = {
+  blogger: { displayName: 'Blogger', scopes: BLOGGER_OAUTH_SCOPES },
+};
+
+export { isOAuthSupported } from './auth-strategy';
