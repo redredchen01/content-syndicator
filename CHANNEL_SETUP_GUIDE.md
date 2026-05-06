@@ -216,3 +216,134 @@ A:
 ---
 
 **总结**: 大多数批处理失败是因为渠道配置不足。使用 admin.html 的诊断面板快速识别缺失的渠道，使用快速配置功能添加它们。配置完成后，新的批处理应该会成功。
+
+---
+
+## Medium & Blogger — OAuth / 浏览器登录配置（推荐路径）
+
+Medium 与 Blogger 现在统一支持「点按钮 → 浏览器登录 → 自动连接」的 UX。底层走两条不同的技术路径，因为两个平台的认证现实不同：
+
+| 平台 | 状态 | 推荐做法 |
+|---|---|---|
+| **Medium** | API token 自 2023 起停止发新（旧 token 仍可用） | 留空 `MEDIUM_INTEGRATION_TOKEN` → admin 页点 Medium 卡片的「使用浏览器登录」 |
+| **Blogger** | Google OAuth 2.0 完整可用 | 一次性配置 Google Cloud OAuth Client → admin 页点「Connect with Google」 |
+
+### Blogger 配置步骤（5 分钟）
+
+1. 进 [Google Cloud Console](https://console.cloud.google.com/)，创建一个新项目（或选已有项目）
+2. **APIs & Services** → **Library** → 搜索「Blogger API v3」→ 点 Enable
+3. **APIs & Services** → **OAuth consent screen**
+   - User Type 选 **External** → Create
+   - App name / User support email / Developer contact 填好
+   - Scopes 步骤先跳过（直接 Save and Continue）
+   - **Test users**：添加你自己的 Gmail（开发阶段必须，生产时可申请 verification）
+4. **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth client ID**
+   - Application type 选 **Web application**
+   - Authorized redirect URIs 添加：`http://localhost:3000/api/auth/google/callback`
+     （生产环境换成你的公网域名 + 同一路径，逗号分隔可多填）
+   - Create → 得到 Client ID 和 Client Secret
+5. 复制到 `.env`：
+   ```
+   GOOGLE_OAUTH_CLIENT_ID=xxx.apps.googleusercontent.com
+   GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxx
+   OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/google/callback
+   BLOGGER_BLOG_ID=1234567890123456789
+   ```
+   （`BLOGGER_BLOG_ID` 在你的 Blogger 后台 URL 里：`blogger.com/blog/posts/<这串数字>`）
+6. 重启服务器：`npm start`
+7. 打开 admin.html，Blogger 卡片显示蓝色「Connect with Google」按钮 → 点击 → Google 同意页 → 点 Allow → 自动回到 admin.html，看到 `✅ 已成功连接 blogger` toast
+
+### Medium 浏览器登录（无需 Google Cloud 配置）
+
+1. 在 `.env` 设 `ENABLE_BROWSER_AUTOMATION=true`，留空 `MEDIUM_INTEGRATION_TOKEN`
+2. 重启服务器
+3. admin.html → Medium 卡片下方点「或使用浏览器登录」链接
+4. 系统打开有头浏览器到 medium.com 登录页 → 你手动登录 → 关闭窗口
+5. UI 自动检测到 session（cookie 数 ≥ 5），badge 变绿「✅ 已连接」
+
+### 故障排查
+
+**「OAuth 失败：redirect_uri_mismatch」**
+- Google Cloud Console 里配置的 redirect URI 必须**完全匹配** `.env` 的 `OAUTH_REDIRECT_URI`（包括 http vs https、端口号、尾部斜杠）
+
+**「OAuth 失败：Google did not return a refresh_token」**
+- 上次授权过、Google 没重发 refresh_token。去 [Google 帐户授权页](https://myaccount.google.com/permissions) 撤销本应用 → admin.html 重新点 Connect
+
+**「Connect with Google 按钮灰化」**
+- 缺少 `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `OAUTH_REDIRECT_URI` 任一环境变量
+
+**「Blogger 发布报 invalid_grant」**
+- refresh_token 被 Google 撤销（用户主动撤销 / 90 天未使用 / 密码改了）
+- 系统已自动清理失效 token；点 Connect with Google 重新授权即可
+
+**部署到生产时的注意事项**
+- `OAUTH_REDIRECT_URI` 改成你的公网域名 + `/api/auth/google/callback`
+- Google Cloud Console 的 Authorized redirect URIs 同步加上这个 URL
+- 备份 `ENCRYPTION_KEY`：丢失会导致所有已存的 refresh_token 无法解密
+
+### 生产部署的安全 hardening
+
+**ENCRYPTION_KEY 必须设置**（生产模式下不设会拒绝启动）：
+```bash
+openssl rand -hex 32  # 复制结果到 .env 的 ENCRYPTION_KEY
+```
+切记备份这把密钥 — 丢失会导致所有已加密的 API key 和 OAuth refresh_token 不可恢复。
+
+**ENCRYPTION_KEY 旋转**：换新密钥后，旧的 oauth_tokens.refresh_token 行无法解密。系统会自动检测并清理失败的行（admin 页 Blogger 卡片会变回未连接），用户重新点 Connect with Google 即可。但加密的 api_keys_encrypted 没有同样的自动清理 — 旋转前请在 admin 页面重新填写 API key 表单。
+
+**OAuth 端点访问限制**：默认只允许 loopback (`127.0.0.1`) 访问 `/api/auth/google/start` 和 `DELETE /api/auth/oauth/:platform`，防止任何能访问到 server 端口的网络对手断开你的 OAuth 连接或刷爆 Google client_id 配额。
+
+部署到公网时（反向代理 + 自己的 auth 层），设置：
+```
+OAUTH_ALLOW_REMOTE=true
+```
+**前提是**：你的反向代理必须对所有 admin/auth 路径强制鉴权（basic auth、JWT、SSO 等）。否则相当于把这些端点直接暴露给公网。
+
+---
+
+## Twitter / X — OAuth 2.0 PKCE 配置（推荐）
+
+新接入推荐走 OAuth 2.0 PKCE，admin.html 一键 Connect with X。OAuth 1.0a（4 个 keys）保留作为 fallback，存量用户零迁移。
+
+### 5 分钟操作步骤
+
+1. 进 [X Developer Portal](https://developer.x.com/en/portal/dashboard)
+2. **Create Project** → 起个名字，选 use case → Create App
+3. App 设置页 → 找 **User authentication settings** → 点 **Set up**
+   - **App permissions**：选 **Read and write**（仅 Read 不能发推）
+   - **Type of App**：选 **Web App, Automated App or Bot**
+   - **Callback URI / Redirect URL**：填 `http://localhost:3000/api/auth/twitter/callback`
+   - **Website URL**：随便填一个真实 URL（X 要求非空，不会真访问）
+   - 保存
+4. 跳到 **Keys and Tokens** 页 → **OAuth 2.0 Client ID and Client Secret** 段
+5. **Generate** → 拷贝 Client ID 和 Client Secret 到 `.env`：
+   ```
+   TWITTER_OAUTH_CLIENT_ID=...
+   TWITTER_OAUTH_CLIENT_SECRET=...
+   TWITTER_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/twitter/callback
+   ```
+6. 重启 server：`npm start`
+7. admin.html → Twitter 卡片显示蓝色 **「Connect with X」** → 点击 → X 同意页 → Allow → 自动回到 admin
+
+### 关键约束
+
+- **Callback URI 必须完全匹配** — 任何 `http://` vs `https://`、端口号、尾斜杠差异都会被 X 拒绝
+- **scope `offline.access` 是必需的** — 没有这个 scope，X 不会返回 `refresh_token`，token 一过期（2 小时）就废
+- **App permissions 必须是 Read and write** — Read-only 拿到 token 也无法发推
+- **Free tier 月限额** — X 的免费 tier 每月发推数量有限，超了 OAuth 2.0 token 一样不能用（但 token 仍然有效，限额重置后自动恢复）
+
+### 故障排查
+
+**「invalid_client」错误**
+- Client ID 或 Secret 拷错了 / 多了空格
+
+**「Redirect URI not registered」**
+- X Developer Portal 的 Callback URI 设置必须和 `.env` 的 `TWITTER_OAUTH_REDIRECT_URI` 完全一致
+
+**「Twitter did not return a refresh_token」**
+- App permissions 不是 Read and write，或者 scope 设置错了
+- 解决：在 X Developer Portal 调整权限，然后用户重新授权
+
+**OAuth 2.0 路径连不通，但有旧的 OAuth 1.0a keys**
+- 不删 `TWITTER_CONSUMER_KEY` 等环境变量，TwitterAdapter 会自动 fallback 到 OAuth 1.0a 路径
+- 旧 4-key 用户零迁移

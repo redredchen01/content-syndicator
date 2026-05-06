@@ -4,15 +4,16 @@
  * Generates 7 platform-specific content variants from an editor draft.
  * Each variant is assigned to a persona group via PERSONA_TO_PLATFORMS,
  * rendered with the persona prompt template, and generated via LLM
- * (concurrency=3, fail-isolated via runParallel).
+ * (concurrency configurable via LLM_CONCURRENCY env var, default 5; fail-isolated via runParallel).
  *
  * LLM calls are recorded in llm_calls for cost tracking.
+ * Variant results are cached in variant_cache with 24-hour TTL for cost reduction.
  * Draft is persisted in draft_batches (archived if caller resubmits).
  */
 
 import crypto from 'crypto';
 import type Database from 'better-sqlite3';
-import { MVP_PLATFORMS, computeLlmCost } from '../constants';
+import { MVP_PLATFORMS, computeLlmCost, CONCURRENCY_CONFIG } from '../constants';
 import { platformToPersona } from '../types';
 import type { Variant, PersonaGroup } from '../types';
 import type { BrandProfile } from '../db/repositories';
@@ -20,6 +21,7 @@ import { getPersonaPrompt, renderTemplate } from '../prompts/loader';
 import { invokeLLMWithTools } from '../llm/agent-llm';
 import { runParallel } from '../utils/parallel';
 import { llmCalls, draftBatches } from '../db/repositories';
+import { generateDraftHash, getOrNull as getCachedVariant, set as setCachedVariant } from './variant-cache';
 import { logger } from '../utils/logger';
 
 // -----------------------------------------------------------------------
@@ -55,6 +57,7 @@ export async function generateSingleVariant(
   const persona_group = platformToPersona(platform);
   const variantId = `${batchId}_${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
   const targetUrl = resolveTargetUrl(input);
+  const draftHash = generateDraftHash(input.draft);
 
   if (!persona_group) {
     return {
@@ -65,7 +68,7 @@ export async function generateSingleVariant(
   }
 
   try {
-    return await generateOne({ platform, persona_group }, input, targetUrl, batchId, db);
+    return await generateOne({ platform, persona_group }, input, targetUrl, batchId, draftHash, db);
   } catch (e: any) {
     logger.warn(`[VariantGen] regenerate ${platform} failed: ${e.message}`);
     return {
@@ -95,6 +98,7 @@ export async function generateVariants(
 
   const batchId = `batch_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
   const targetUrl = resolveTargetUrl(input);
+  const draftHash = generateDraftHash(input.draft);
 
   // Persist the draft (new submission archives any prior drafting batch).
   draftBatches.save(db, {
@@ -108,11 +112,14 @@ export async function generateVariants(
     persona_group: platformToPersona(platform)!,
   }));
 
-  // Run concurrently, capped at 3. Failures are isolated per variant.
+  // Run concurrently with configurable LLM_FAN_OUT (default 5 for pay-as-you-go tier).
+  // Failures are isolated per variant.
+  const concurrency = CONCURRENCY_CONFIG.LLM_FAN_OUT;
+  logger.info(`[VariantGen] Starting generation with concurrency=${concurrency}`);
   const results = await runParallel(
     tasks,
-    task => generateOne(task, input, targetUrl, batchId, db),
-    3,
+    task => generateOne(task, input, targetUrl, batchId, draftHash, db),
+    concurrency,
   );
 
   const variants: Variant[] = results.map((result, i) => {
@@ -166,8 +173,25 @@ async function generateOne(
   input: GenerateVariantsInput,
   targetUrl: string,
   batchId: string,
+  draftHash: string,
   db: Database.Database,
 ): Promise<Variant> {
+  // Check cache first (24-hour TTL, hit-counted).
+  const cached = getCachedVariant(db, input.brand.brand_id, draftHash, task.persona_group);
+  if (cached) {
+    logger.info(`[VariantGen] ${task.persona_group} cache hit`);
+    const variantId = `${batchId}_${task.platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+    return {
+      variant_id: variantId,
+      platform: task.platform,
+      persona_group: task.persona_group,
+      ...cached,
+      anchor_words: cached.anchor_words,
+      target_url: targetUrl,
+      generation_status: 'ok' as const,
+    };
+  }
+
   const prompt = getPersonaPrompt(task.persona_group);
 
   // Placeholder anchor_words for the prompt — real anchors come from Unit 6.
@@ -221,7 +245,7 @@ async function generateOne(
     cost_usd: cost,
   });
 
-  return {
+  const variant = {
     variant_id: `${batchId}_${task.platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
     platform: task.platform,
     persona_group: task.persona_group,
@@ -229,8 +253,13 @@ async function generateOne(
     body_markdown: body,
     anchor_words: [], // populated by Unit 6 attachAnchors()
     target_url: targetUrl,
-    generation_status: 'ok',
+    generation_status: 'ok' as const,
   };
+
+  // Cache the result for 24 hours to reduce LLM cost on repeated content.
+  setCachedVariant(db, input.brand.brand_id, draftHash, task.persona_group, variant);
+
+  return variant;
 }
 
 /** Extract title and body from a Markdown response that starts with `# Title`. */

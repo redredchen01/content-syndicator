@@ -83,6 +83,37 @@ describe('applyV2Schema', () => {
     ).toThrowError(/UNIQUE/);
   });
 
+  it('brand_profiles has da_tier_config_json and roi_threshold columns', () => {
+    applyV2Schema(db);
+    const cols = db.prepare('PRAGMA table_info(brand_profiles)').all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('da_tier_config_json');
+    expect(names).toContain('roi_threshold');
+  });
+
+  it('publish_jobs has priority column defaulting to 0.0', () => {
+    applyV2Schema(db);
+    db.prepare(`
+      INSERT INTO publish_jobs (batch_id, variant_id, platform, job_type, scheduled_at)
+      VALUES ('b','v','Medium','publish','2026-05-06T00:00:00Z')
+    `).run();
+    const row = db.prepare('SELECT priority FROM publish_jobs').get() as { priority: number };
+    expect(row.priority).toBe(0.0);
+  });
+
+  it('idx_publish_jobs_dispatch includes priority column', () => {
+    applyV2Schema(db);
+    const idxInfo = db.prepare('PRAGMA index_info(idx_publish_jobs_dispatch)').all() as Array<{ name: string }>;
+    const colNames = idxInfo.map((r) => r.name);
+    expect(colNames).toContain('priority');
+  });
+
+  it('idx_link_checks_platform_type exists on link_checks', () => {
+    applyV2Schema(db);
+    const indexes = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='link_checks'`).all() as Array<{ name: string }>;
+    expect(indexes.map(i => i.name)).toContain('idx_link_checks_platform_type');
+  });
+
   it('publish_jobs status CHECK rejects unknown values', () => {
     applyV2Schema(db);
     expect(() =>

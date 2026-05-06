@@ -224,4 +224,64 @@ export function applyV2Schema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_anchor_history_batch_used
       ON anchor_history(batch_id, used_at DESC)
   `);
+
+  // oauth_tokens — one row per platform. Stores user-level OAuth2 credentials
+  // obtained via the /api/auth/google/callback flow. Takes precedence over
+  // service-account JSON for adapters that support it (e.g. Blogger).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      platform    TEXT PRIMARY KEY,
+      access_token  TEXT,
+      refresh_token TEXT NOT NULL,
+      expires_at    INTEGER,
+      updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // ROI auto-ranking: DA tier config + skip threshold per brand
+  addColumnIfMissing(db, 'brand_profiles', 'da_tier_config_json', "TEXT DEFAULT '{}'");
+  addColumnIfMissing(db, 'brand_profiles', 'roi_threshold', 'REAL DEFAULT 0.3');
+
+  // ROI auto-ranking: priority column for queue ordering (REAL preserves score precision)
+  addColumnIfMissing(db, 'publish_jobs', 'priority', 'REAL NOT NULL DEFAULT 0.0');
+
+  // Rebuild dispatch index to include priority DESC for ROI-ordered dequeue
+  db.exec('DROP INDEX IF EXISTS idx_publish_jobs_dispatch');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_publish_jobs_dispatch
+      ON publish_jobs(status, priority DESC, scheduled_at ASC)
+  `);
+
+  // Index for per-platform survival rate queries (Unit 2 / ROI scorer)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_link_checks_platform_type
+      ON link_checks(platform, check_type, checked_at)
+  `);
+
+  // variant_cache — LLM generation result caching (Unit 5, R3)
+  // Keyed by hash(brand_id + draft_hash + persona_group) for 24h TTL reuse
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS variant_cache (
+      cache_key TEXT PRIMARY KEY,
+      brand_id TEXT NOT NULL,
+      draft_hash TEXT NOT NULL,
+      persona_group TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body_markdown TEXT NOT NULL,
+      anchor_words TEXT DEFAULT '[]',
+      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      hit_count INTEGER DEFAULT 0
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_variant_cache_brand_expires
+      ON variant_cache(brand_id, expires_at)
+  `);
+
+  // Index for batch queries by brand and status (Unit 6)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_draft_batches_brand_status
+      ON draft_batches(brand_id, status)
+  `);
 }

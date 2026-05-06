@@ -29,6 +29,9 @@ applyV2Schema(db);
 export { db };
 
 // Re-export repositories so callers can do `import { brandProfile } from './db'`.
+// Note: oauthTokens lives in its own module (./oauth-tokens) because it
+// transparently encrypts refresh_token at rest — separating it from
+// repositories keeps the DAO surface honest about which fields are encrypted.
 export {
   brandProfile,
   publishJobs,
@@ -37,6 +40,7 @@ export {
   llmCalls,
   draftBatches,
 } from './repositories';
+export { oauthTokens } from './oauth-tokens';
 
 export type {
   BrandProfile,

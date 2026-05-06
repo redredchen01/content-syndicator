@@ -199,6 +199,62 @@
       </form>
     </div>
   </div>
+
+  <!-- ROI Scoring Config Section -->
+  <div class="mt-8 bg-white rounded-xl shadow-sm border border-slate-200">
+    <button type="button" id="roi-config-toggle"
+            class="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-slate-50 rounded-xl"
+            onclick="toggleRoiConfig()">
+      <h2 class="text-lg font-semibold">ROI 评分配置</h2>
+      <span id="roi-config-chevron" class="text-slate-400 text-sm">&#9660;</span>
+    </button>
+    <div id="roi-config-body" class="hidden px-6 pb-6 border-t border-slate-200">
+      <!-- Load error -->
+      <div id="roi-config-load-error" class="hidden mt-4 px-4 py-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-800">
+        <span id="roi-config-load-error-msg"></span>
+        <button type="button" class="ml-3 underline text-red-700 hover:text-red-900 text-xs" onclick="loadRoiConfig()">重试</button>
+      </div>
+
+      <!-- Threshold -->
+      <div class="mt-4">
+        <label class="block text-sm font-medium mb-1" for="roi-threshold">ROI 跳过阈值</label>
+        <input id="roi-threshold" type="number" min="0" max="1" step="0.1" value="0.3"
+               class="w-40 border border-slate-300 rounded-md px-3 py-2" />
+        <p class="text-xs text-slate-500 mt-1">低于此分数的平台将跳过发布（默认 0.3）</p>
+      </div>
+
+      <!-- Per-platform DA tier table -->
+      <div class="mt-5">
+        <p class="text-sm font-medium mb-2">逐平台 DA 分层</p>
+        <div class="border border-slate-200 rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-2 text-left font-medium text-slate-600">平台</th>
+                <th class="px-4 py-2 text-left font-medium text-slate-600">DA 分层</th>
+              </tr>
+            </thead>
+            <tbody id="roi-tier-rows" class="divide-y divide-slate-100">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Save button + status -->
+      <div class="mt-5 flex items-center gap-4">
+        <button type="button" id="roi-save-btn"
+                class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                onclick="saveRoiConfig()">
+          保存
+        </button>
+        <div id="roi-save-status" class="text-sm hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROI save toast -->
+  <div id="roi-toast" class="hidden fixed bottom-6 right-6 px-5 py-3 rounded-lg shadow-lg text-sm font-medium z-50"></div>
 </div>
 
 <script>
@@ -500,6 +556,75 @@
     $('api-key-status').textContent = '';
   }
 
+  // ── 1-Click Connect for browser platforms ─────────────────────────────────
+  const MIN_AUTH_COOKIES = 5;
+  const POLL_INTERVAL_MS = 2000;
+  const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  const activePollers = {}; // platformId → intervalId
+
+  async function startBrowserLogin(platformId) {
+    // Hybrid platforms (e.g. Medium with supportsBrowserFallback) trigger this
+    // from a secondary link, so the browser-btn-${platformId} element may not
+    // exist. Update UI affordances best-effort and continue regardless.
+    const btn = document.getElementById(`browser-btn-${platformId}`);
+    const badge = document.getElementById(`browser-badge-${platformId}`);
+
+    const loginStartedAt = Date.now();
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '浏览器已打开，请登录...';
+    }
+    if (badge) { badge.textContent = '登录中…'; badge.className = 'text-xs px-2 py-1 rounded bg-yellow-50 text-yellow-700'; }
+
+    try {
+      const res = await fetch('/api/auth/browser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platformId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (btn) { btn.disabled = false; btn.textContent = '1-Click Connect'; }
+        if (badge) { badge.textContent = '连接失败'; badge.className = 'text-xs px-2 py-1 rounded bg-red-50 text-red-700'; }
+        const hint = res.status === 403
+          ? '请先在 .env 设置 ENABLE_BROWSER_AUTOMATION=true'
+          : (data.error || '启动失败，请重试');
+        alert(hint);
+        return;
+      }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.textContent = '1-Click Connect'; }
+      alert('网络错误：' + err.message);
+      return;
+    }
+
+    // Stop any existing poller for this platform
+    if (activePollers[platformId]) clearInterval(activePollers[platformId]);
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+    activePollers[platformId] = setInterval(async () => {
+      if (Date.now() > deadline) {
+        clearInterval(activePollers[platformId]);
+        delete activePollers[platformId];
+        if (btn) { btn.disabled = false; btn.textContent = '1-Click Connect'; }
+        if (badge) { badge.textContent = '超时未完成'; badge.className = 'text-xs px-2 py-1 rounded bg-red-50 text-red-700'; }
+        alert('超时（5分钟）未检测到登录完成。请关闭浏览器窗口后重试。');
+        return;
+      }
+
+      try {
+        const s = await fetch(`/api/auth/browser/status/${platformId}`).then(r => r.json());
+        if (s.exists && s.mtime > loginStartedAt && s.cookieCount >= MIN_AUTH_COOKIES) {
+          clearInterval(activePollers[platformId]);
+          delete activePollers[platformId];
+          if (btn) { btn.disabled = false; btn.textContent = '重新连接'; }
+          if (badge) { badge.textContent = '✅ 已连接'; badge.className = 'text-xs px-2 py-1 rounded bg-green-50 text-green-700'; }
+          platformsCacheTime = 0; // invalidate cache
+        }
+      } catch { /* network hiccup, keep polling */ }
+    }, POLL_INTERVAL_MS);
+  }
+
   $('quick-add-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const platformId = $('platform-select').value;
@@ -575,27 +700,81 @@
       const platformSelect = $('platform-select');
 
       container.innerHTML = data.platforms.map(p => {
-        const statusColor = p.connected ? 'text-green-600' : 'text-red-600';
         const statusText = p.connected ? '已连接' : p.reason;
         const isDefault = data.defaults.includes(p.name);
+        const badgeClass = p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700';
+
+        let actionBtn;
+        if (p.supportsOAuth) {
+          // Provider-specific URL path and button label come from /api/platforms.
+          const provider = p.oauthProviderId || 'google';
+          const label = p.oauthProviderLabel || 'Google';
+          const startUrl = `/api/auth/${provider}/start?platform=${p.id}`;
+          const tooltipEnv = provider === 'twitter'
+            ? 'TWITTER_OAUTH_CLIENT_ID / TWITTER_OAUTH_CLIENT_SECRET / TWITTER_OAUTH_REDIRECT_URI'
+            : 'GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / OAUTH_REDIRECT_URI';
+          if (!p.oauthConfigured) {
+            actionBtn = `<button type="button" disabled
+                         class="ml-2 px-3 py-1 text-sm border border-slate-200 rounded bg-slate-50 text-slate-400 cursor-not-allowed"
+                         title="请在 .env 配置 ${tooltipEnv}">
+                         Connect with ${label}
+                       </button>`;
+          } else if (p.oauthConnected) {
+            actionBtn = `<div class="flex gap-2">
+                         <a href="${startUrl}"
+                            class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50">
+                           重新授权
+                         </a>
+                         <button type="button"
+                            class="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50"
+                            onclick="disconnectOAuth('${p.id}')">
+                           断开
+                         </button>
+                       </div>`;
+          } else {
+            actionBtn = `<a href="${startUrl}"
+                          class="ml-2 px-3 py-1 text-sm border border-blue-300 text-blue-700 rounded hover:bg-blue-50">
+                          Connect with ${label}
+                        </a>`;
+          }
+        } else if (p.browserAutomation) {
+          actionBtn = `<button type="button" id="browser-btn-${p.id}"
+                       class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                       onclick="startBrowserLogin('${p.id}')">
+                       ${p.connected ? '重新连接' : '1-Click Connect'}
+                     </button>`;
+        } else {
+          actionBtn = `<button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                       onclick="openApiKeyForm('${p.id}', '${p.name}')">
+                       ${p.connected ? '更新' : '连接'}
+                     </button>`;
+        }
+
+        // Hybrid platforms (e.g. Medium): show secondary "use browser login" link
+        const fallbackLink = p.supportsBrowserFallback
+          ? `<a href="javascript:void(0)" onclick="startBrowserLogin('${p.id}')"
+                 class="text-xs text-blue-600 hover:underline ml-2">
+                 ${p.browserSessionExists ? '已存在浏览器登录会话' : '或使用浏览器登录（API token 可选）'}
+               </a>`
+          : '';
 
         return `
           <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
             <div class="flex-1">
               <div class="flex items-center gap-2 mb-1">
                 <span class="font-medium text-sm">${p.name}</span>
-                <span class="text-xs px-2 py-1 rounded ${p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
+                <span id="browser-badge-${p.id}" class="text-xs px-2 py-1 rounded ${badgeClass}">
                   ${statusText}
                 </span>
+                ${p.supportsOAuth ? '<span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-500">OAuth</span>' : ''}
+                ${p.browserAutomation ? '<span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-500">浏览器</span>' : ''}
                 ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
               </div>
+              ${fallbackLink}
               ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
               ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
             </div>
-            <button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
-                    onclick="openApiKeyForm('${p.id}', '${p.name}')">
-              ${p.connected ? '更新' : '连接'}
-            </button>
+            ${actionBtn}
           </div>
         `;
       }).join('');
@@ -610,12 +789,200 @@
     }
   }
 
+  // ── OAuth disconnect ──────────────────────────────────────────────────────
+  async function disconnectOAuth(platformId) {
+    if (!confirm(`确认断开 ${platformId} 的 OAuth 连接？`)) return;
+    try {
+      const res = await fetch(`/api/auth/oauth/${platformId}`, { method: 'DELETE' });
+      if (res.ok) {
+        showOAuthToast(`已断开 ${platformId}`, 'info');
+        platformsCacheTime = 0;
+        loadPlatformsWithCaching();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showOAuthToast(`断开失败：${data.error || '未知错误'}`, 'error');
+      }
+    } catch (err) {
+      showOAuthToast(`网络错误：${err.message}`, 'error');
+    }
+  }
+
+  // ── OAuth callback toast ──────────────────────────────────────────────────
+  function showOAuthToast(message, kind) {
+    const colors = {
+      success: 'bg-green-50 border-green-300 text-green-800',
+      error:   'bg-red-50 border-red-300 text-red-800',
+      info:    'bg-blue-50 border-blue-300 text-blue-800',
+    };
+    const toast = document.createElement('div');
+    toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg border shadow-lg ${colors[kind] || colors.info}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+  }
+
+  function handleOAuthRedirect() {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('connected');
+    const oauthError = params.get('oauth_error');
+    if (connected) {
+      showOAuthToast(`✅ 已成功连接 ${connected}`, 'success');
+      params.delete('connected');
+    }
+    if (oauthError) {
+      showOAuthToast(`OAuth 失败：${oauthError}`, 'error');
+      params.delete('oauth_error');
+    }
+    if (connected || oauthError) {
+      const newQuery = params.toString();
+      const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '') + window.location.hash;
+      window.history.replaceState({}, '', newUrl);
+      platformsCacheTime = 0;
+    }
+  }
+  handleOAuthRedirect();
+
   loadPlatformsWithCaching();
   setInterval(() => {
     // Clear cache every 30 seconds to fetch fresh data
     platformsCacheTime = 0;
     loadPlatformsWithCaching();
   }, 30000);
+
+  // ── ROI 评分配置 ────────────────────────────────────────────────────────────
+  const ROI_PLATFORMS = [
+    { name: 'Medium',     tierScore: 1.0 },
+    { name: 'Dev.to',     tierScore: 1.0 },
+    { name: 'Hashnode',   tierScore: 1.0 },
+    { name: 'Blogger',    tierScore: 0.6 },
+    { name: 'WordPress',  tierScore: 0.6 },
+    { name: 'Telegra.ph', tierScore: 0.3 },
+    { name: 'GitHub',     tierScore: 0.3 },
+  ];
+
+  // Tier score → option value mapping
+  const TIER_OPTIONS = [
+    { label: 'Tier1 (1.0)', value: 1.0 },
+    { label: 'Tier2 (0.6)', value: 0.6 },
+    { label: 'Tier3 (0.3)', value: 0.3 },
+  ];
+
+  let roiConfigOpen = false;
+  let roiConfigLoaded = false;
+  let roiSaving = false;
+
+  function toggleRoiConfig() {
+    roiConfigOpen = !roiConfigOpen;
+    $('roi-config-body').classList.toggle('hidden', !roiConfigOpen);
+    $('roi-config-chevron').textContent = roiConfigOpen ? '▲' : '▼';
+    if (roiConfigOpen && !roiConfigLoaded) {
+      loadRoiConfig();
+    }
+  }
+
+  function renderRoiTierRows(platforms) {
+    const tbody = $('roi-tier-rows');
+    tbody.innerHTML = platforms.map((p, i) => {
+      const opts = TIER_OPTIONS.map(o =>
+        `<option value="${o.value}"${p.tierScore === o.value ? ' selected' : ''}>${o.label}</option>`
+      ).join('');
+      return `
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-2 font-medium text-slate-700">${p.name}</td>
+          <td class="px-4 py-2">
+            <select id="roi-tier-${i}" class="border border-slate-300 rounded px-2 py-1 text-sm">
+              ${opts}
+            </select>
+          </td>
+        </tr>`;
+    }).join('');
+  }
+
+  async function loadRoiConfig() {
+    $('roi-config-load-error').classList.add('hidden');
+    try {
+      const res = await fetch('/api/v2/platform-health');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      // Map returned daTierScore per platform name into ROI_PLATFORMS defaults
+      const platforms = ROI_PLATFORMS.map(p => {
+        const found = Array.isArray(data) && data.find(d => d.platform === p.name);
+        return { name: p.name, tierScore: found ? found.daTierScore : p.tierScore };
+      });
+      renderRoiTierRows(platforms);
+      roiConfigLoaded = true;
+    } catch (err) {
+      $('roi-config-load-error-msg').textContent = '加载失败：' + err.message;
+      $('roi-config-load-error').classList.remove('hidden');
+      // Still render with defaults so form is usable
+      renderRoiTierRows(ROI_PLATFORMS);
+    }
+  }
+
+  function showRoiToast(message, kind /* 'ok' | 'error' */) {
+    const el = $('roi-toast');
+    el.className = `fixed bottom-6 right-6 px-5 py-3 rounded-lg shadow-lg text-sm font-medium z-50 ${
+      kind === 'ok'
+        ? 'bg-green-50 border border-green-200 text-green-800'
+        : 'bg-red-50 border border-red-200 text-red-800'
+    }`;
+    el.textContent = message;
+    el.classList.remove('hidden');
+    if (kind === 'ok') {
+      setTimeout(() => el.classList.add('hidden'), 2000);
+    }
+  }
+
+  function hideRoiToast() {
+    $('roi-toast').classList.add('hidden');
+  }
+
+  async function saveRoiConfig() {
+    if (roiSaving) return;
+    roiSaving = true;
+    const saveBtn = $('roi-save-btn');
+    const saveStatus = $('roi-save-status');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '保存中...';
+    saveStatus.classList.add('hidden');
+    hideRoiToast();
+
+    const threshold = parseFloat($('roi-threshold').value);
+    const daTierConfig = {};
+    ROI_PLATFORMS.forEach((p, i) => {
+      const sel = $(`roi-tier-${i}`);
+      if (sel) daTierConfig[p.name] = parseFloat(sel.value);
+    });
+
+    try {
+      const res = await fetch('/api/v2/roi-config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daTierConfig, threshold }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.error || data.message || `HTTP ${res.status}`;
+        saveStatus.textContent = '✗ ' + msg;
+        saveStatus.className = 'text-sm text-red-600';
+        saveStatus.classList.remove('hidden');
+      } else {
+        showRoiToast('保存成功', 'ok');
+      }
+    } catch (err) {
+      const retryHtml = `✗ 保存失败，请重试 — ${err.message}`;
+      saveStatus.innerHTML = retryHtml;
+      saveStatus.className = 'text-sm text-red-600';
+      saveStatus.classList.remove('hidden');
+    } finally {
+      roiSaving = false;
+      saveBtn.disabled = false;
+      saveBtn.textContent = '保存';
+    }
+  }
+
+  // Render default rows immediately (before section is opened)
+  renderRoiTierRows(ROI_PLATFORMS);
 </script>
 </body>
 </html>

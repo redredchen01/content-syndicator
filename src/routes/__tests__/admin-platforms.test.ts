@@ -48,6 +48,49 @@ describe('GET /api/platforms', () => {
     expect(telegraph).toBeDefined();
     expect(telegraph.connected).toBe(true);
   });
+
+  it('marks Blogger as supportsOAuth and exposes oauthConfigured/oauthConnected flags', async () => {
+    const res = await request(app).get('/api/platforms');
+    const blogger = res.body.platforms.find((p: any) => p.name === 'Blogger');
+    expect(blogger).toBeDefined();
+    expect(blogger.supportsOAuth).toBe(true);
+    expect(typeof blogger.oauthConfigured).toBe('boolean');
+    expect(typeof blogger.oauthConnected).toBe('boolean');
+    expect(blogger.oauthProviderId).toBe('google');
+    expect(blogger.oauthProviderLabel).toBe('Google');
+  });
+
+  it('marks Twitter as supportsOAuth with providerId=twitter and label=X', async () => {
+    const res = await request(app).get('/api/platforms');
+    const twitter = res.body.platforms.find((p: any) => p.name === 'Twitter');
+    expect(twitter).toBeDefined();
+    expect(twitter.supportsOAuth).toBe(true);
+    expect(twitter.oauthProviderId).toBe('twitter');
+    expect(twitter.oauthProviderLabel).toBe('X');
+  });
+
+  it('marks Medium as supportsBrowserFallback', async () => {
+    const res = await request(app).get('/api/platforms');
+    const medium = res.body.platforms.find((p: any) => p.name === 'Medium');
+    expect(medium).toBeDefined();
+    expect(medium.supportsBrowserFallback).toBe(true);
+    expect(medium.supportsOAuth).toBe(false);
+  });
+
+  it('does not mark non-OAuth/non-fallback platforms with the new flags', async () => {
+    const res = await request(app).get('/api/platforms');
+    const telegraph = res.body.platforms.find((p: any) => p.name === 'Telegra.ph');
+    expect(telegraph.supportsOAuth).toBe(false);
+    expect(telegraph.supportsBrowserFallback).toBe(false);
+  });
+
+  it('includes browserSessionExists field for every platform', async () => {
+    const res = await request(app).get('/api/platforms');
+    for (const p of res.body.platforms) {
+      expect(p).toHaveProperty('browserSessionExists');
+      expect(typeof p.browserSessionExists).toBe('boolean');
+    }
+  });
 });
 
 describe('PATCH /api/platforms/:platformId/api-key', () => {
@@ -183,5 +226,153 @@ describe('Platform status persistence', () => {
 
     // Both should return the same structure
     expect(res1.body.platforms.length).toBe(res2.body.platforms.length);
+  });
+});
+
+// ── Helper: ensure a 'main' brand_profiles row exists ────────────────────────
+function ensureMainProfile() {
+  const existing = db
+    .prepare(`SELECT brand_id FROM brand_profiles WHERE brand_id = 'main'`)
+    .get();
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO brand_profiles (brand_id, name, name_variants_json, target_urls_json,
+        exposure_blocklist_json, anchor_blocklist_json)
+      VALUES ('main', 'Test Brand', '[]', '[]', '[]', '[]')
+    `).run();
+  }
+}
+
+// ── GET /api/v2/platform-health ───────────────────────────────────────────────
+
+describe('GET /api/v2/platform-health', () => {
+  it('returns array of 7 MVP platforms', async () => {
+    const res = await request(app).get('/api/v2/platform-health');
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body).toHaveLength(7);
+  });
+
+  it('each item has required fields', async () => {
+    const res = await request(app).get('/api/v2/platform-health');
+
+    expect(res.status).toBe(200);
+    const item = res.body[0];
+    expect(item).toHaveProperty('platform');
+    expect(item).toHaveProperty('daTierLabel');
+    expect(item).toHaveProperty('daTierScore');
+    expect(item).toHaveProperty('t7dRate');
+    expect(item).toHaveProperty('t30dRate');
+    expect(item).toHaveProperty('status');
+    expect(item).toHaveProperty('dataInsufficient');
+  });
+
+  it('returns status=insufficient for all when no link_checks data', async () => {
+    const res = await request(app).get('/api/v2/platform-health');
+
+    expect(res.status).toBe(200);
+    // Fresh test DB has no link_checks data → all should be insufficient
+    for (const item of res.body) {
+      expect(item.dataInsufficient).toBe(true);
+      expect(item.status).toBe('insufficient');
+    }
+  });
+
+  it('includes all 7 MVP platform names', async () => {
+    const res = await request(app).get('/api/v2/platform-health');
+
+    expect(res.status).toBe(200);
+    const names: string[] = res.body.map((item: any) => item.platform);
+    const MVP = ['Telegra.ph', 'Dev.to', 'Medium', 'Hashnode', 'GitHub', 'Blogger', 'WordPress'];
+    for (const p of MVP) {
+      expect(names).toContain(p);
+    }
+  });
+});
+
+// ── PATCH /api/v2/roi-config ──────────────────────────────────────────────────
+
+describe('PATCH /api/v2/roi-config', () => {
+  beforeEach(() => {
+    ensureMainProfile();
+  });
+
+  it('updates threshold and returns updated config', async () => {
+    const res = await request(app)
+      .patch('/api/v2/roi-config')
+      .send({ daTierConfig: {}, threshold: 0.5 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.threshold).toBe(0.5);
+  });
+
+  it('GET /api/v2/platform-health reflects new threshold after update', async () => {
+    await request(app)
+      .patch('/api/v2/roi-config')
+      .send({ daTierConfig: {}, threshold: 0.7 });
+
+    // Health endpoint should still work (returns 200)
+    const healthRes = await request(app).get('/api/v2/platform-health');
+    expect(healthRes.status).toBe(200);
+    expect(Array.isArray(healthRes.body)).toBe(true);
+  });
+
+  it('rejects threshold > 1 with 400', async () => {
+    const res = await request(app)
+      .patch('/api/v2/roi-config')
+      .send({ daTierConfig: {}, threshold: 1.5 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/threshold/);
+  });
+
+  it('rejects threshold < 0 with 400', async () => {
+    const res = await request(app)
+      .patch('/api/v2/roi-config')
+      .send({ daTierConfig: {}, threshold: -0.1 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/threshold/);
+  });
+
+  it('rejects non-finite threshold with 400', async () => {
+    const res = await request(app)
+      .patch('/api/v2/roi-config')
+      .send({ daTierConfig: {}, threshold: null });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects unknown platform key in daTierConfig with 400', async () => {
+    const res = await request(app)
+      .patch('/api/v2/roi-config')
+      .send({ daTierConfig: { 'UnknownPlatform': 0.6 }, threshold: 0.3 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Unknown platform/);
+  });
+
+  it('rejects invalid tier score (0.5) with 400', async () => {
+    const res = await request(app)
+      .patch('/api/v2/roi-config')
+      .send({ daTierConfig: { 'Medium': 0.5 }, threshold: 0.3 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Invalid tier score/);
+  });
+
+  it('accepts valid tier scores 0.3, 0.6, 1.0', async () => {
+    const res = await request(app)
+      .patch('/api/v2/roi-config')
+      .send({
+        daTierConfig: { 'Medium': 1.0, 'GitHub': 0.6, 'Telegra.ph': 0.3 },
+        threshold: 0.3,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.daTierConfig['Medium']).toBe(1.0);
+    expect(res.body.daTierConfig['GitHub']).toBe(0.6);
+    expect(res.body.daTierConfig['Telegra.ph']).toBe(0.3);
   });
 });
