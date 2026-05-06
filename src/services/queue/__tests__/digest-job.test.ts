@@ -195,6 +195,67 @@ describe('handleDailyDigestJob', () => {
   });
 });
 
+describe('Telegram token parsing — full-token format', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{}', { status: 200 }),
+    );
+  });
+  afterEach(() => fetchSpy.mockRestore());
+
+  function makeDbWithActivity(digest_destination: string) {
+    const db = makeDb();
+    db.prepare(`INSERT INTO brand_profiles
+      (brand_id, name, name_variants_json, target_urls_json, exposure_blocklist_json,
+       anchor_blocklist_json, digest_channel, digest_destination)
+      VALUES ('main','T','[]','[]','[]','[]','telegram', ?)
+    `).run(digest_destination);
+    // Add one succeeded publish job today so digest has activity to report
+    db.prepare(`INSERT INTO publish_jobs
+      (batch_id, variant_id, platform, job_type, payload_json, scheduled_at, status, attempts, metadata_json)
+      VALUES ('b1','v1','github','publish','{}',datetime('now'),'succeeded',1,'{}')
+    `).run();
+    return db;
+  }
+
+  it('legacy format bot<id>:<chatId> — sends with correct botToken and chatId', async () => {
+    const db = makeDbWithActivity('bot123:chatid456');
+    await handleDailyDigestJob(makeDigestJob(), db);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const url = fetchSpy.mock.calls[0][0] as string;
+    // botToken = '123' (just numeric id, legacy)
+    expect(url).toContain('bot123/sendMessage');
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body.chat_id).toBe('chatid456');
+    db.close();
+  });
+
+  it('full-token format bot<id>:<hash>:<chatId> — sends with complete botToken', async () => {
+    const db = makeDbWithActivity('bot1234567890:AABBCCDDEEFF:987654321');
+    await handleDailyDigestJob(makeDigestJob(), db);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const url = fetchSpy.mock.calls[0][0] as string;
+    // botToken = '1234567890:AABBCCDDEEFF' (full token including hash)
+    expect(url).toContain('bot1234567890:AABBCCDDEEFF/sendMessage');
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body.chat_id).toBe('987654321');
+    db.close();
+  });
+
+  it('invalid token (no colon) — warns and does not call fetch', async () => {
+    const db = makeDbWithActivity('invalid_no_colon');
+    const { logger } = await import('../../../utils/logger');
+    await handleDailyDigestJob(makeDigestJob(), db);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid Telegram token format'),
+    );
+    db.close();
+  });
+});
+
 describe('seedDailyDigest', () => {
   it('inserts a daily_digest job for today if not present', () => {
     const db = makeDb();
