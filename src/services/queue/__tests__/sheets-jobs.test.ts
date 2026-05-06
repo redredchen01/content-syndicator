@@ -31,7 +31,7 @@ function makeDb() {
   return db;
 }
 
-function makeJob(jobType = 'aggregate_sheets'): PublishJob {
+function makeJob(jobType: import('../../../db/repositories').JobType = 'aggregate_sheets'): PublishJob {
   return {
     id: 1,
     batch_id: 'system',
