@@ -138,7 +138,11 @@ export async function generateMarkdown(scraped: ScrapedData): Promise<{ title: s
   const fallbackTitle = scraped.title || "Extracted Article";
   const fallbackContent = `> **🛡️ 智能绕过系统提示 (Bypass System):**\n> 您的这篇内容由于触发了 Google Gemini 无法关闭的底层最高级别强制安全审核 (\`PROHIBITED_CONTENT\`) 而被大模型拒绝处理。\n> \n> 由于您没有绑定 OpenAI 作为备用模型，为了保证您的工作流不被中断，**系统已自动绕过大模型，直接为您提取并展示了原文的原始 Markdown 代码！**\n> \n> 您可以直接在下方手动编辑，然后点击发布。\n\n---\n\n${scraped.content}`;
 
-  return invokeLLM(prompt, fallbackContent, fallbackTitle);
+  const result = await invokeLLM(prompt, fallbackContent, fallbackTitle);
+  if (!result.title?.trim() || !result.content?.trim()) {
+    throw new Error('LLM returned empty title or content');
+  }
+  return result;
 }
 
 export async function generatePromoMarkdown(primaryTitle: string, primaryContent: string, urls: string[]): Promise<{ title: string, content: string, tags?: string[], excerpt?: string }> {
@@ -147,7 +151,11 @@ export async function generatePromoMarkdown(primaryTitle: string, primaryContent
   const fallbackTitle = `Promo for: ${primaryTitle}`;
   const fallbackContent = `> **⚠️ Promo LLM Warning:** LLM Generation Failed. \n\nPlease manually write the promotional content. Here are the links to include:\n${urls.map(url => `- ${url}`).join('\n')}`;
 
-  return invokeLLM(prompt, fallbackContent, fallbackTitle);
+  const result = await invokeLLM(prompt, fallbackContent, fallbackTitle);
+  if (!result.title?.trim() || !result.content?.trim()) {
+    throw new Error('LLM returned empty title or content');
+  }
+  return result;
 }
 
 export async function analyzeDOMForSelectors(domSnapshot: string, platformName: string): Promise<{ titleSelector: string, contentSelector: string, publishButtonSelector: string }> {
