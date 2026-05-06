@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { handleDailyDigestJob, seedDailyDigest } from '../digest-job';
 import type { PublishJob } from '../../../db/repositories';
@@ -6,6 +6,22 @@ import { applyV2Schema } from '../../../db/schema';
 
 vi.mock('../../../utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+// Mock googleapis so tests don't make real HTTP calls
+vi.mock('googleapis', () => ({
+  google: {
+    auth: {
+      JWT: vi.fn().mockImplementation(() => ({})),
+    },
+    gmail: vi.fn().mockReturnValue({
+      users: {
+        messages: {
+          send: vi.fn().mockResolvedValue({ data: { id: 'msg_123' } }),
+        },
+      },
+    }),
+  },
 }));
 
 function makeDb() {
@@ -31,6 +47,112 @@ function makeDigestJob(): PublishJob {
     updated_at: new Date().toISOString(),
   };
 }
+
+// ── Email digest tests ───────────────────────────────────────────────────────
+
+describe('handleDailyDigestJob — email channel', () => {
+  const origCredsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  const origSender   = process.env.DIGEST_SENDER_EMAIL;
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    if (origCredsJson === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    else process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = origCredsJson;
+    if (origSender === undefined) delete process.env.DIGEST_SENDER_EMAIL;
+    else process.env.DIGEST_SENDER_EMAIL = origSender;
+  });
+
+  function makeEmailProfile(db: Database.Database) {
+    db.prepare(`INSERT INTO brand_profiles
+      (brand_id, name, name_variants_json, target_urls_json, exposure_blocklist_json, anchor_blocklist_json,
+       digest_channel, digest_destination)
+      VALUES ('main', 'TestBrand', '[]', '[]', '[]', '[]', 'email', 'ops@example.com')
+    `).run();
+    // Insert a succeeded job today so there IS activity
+    db.prepare(`INSERT INTO publish_jobs
+      (batch_id, variant_id, platform, job_type, payload_json, scheduled_at, status, metadata_json)
+      VALUES ('b1', 'v1', 'Dev.to', 'publish', '{}', datetime('now'), 'succeeded', '{}')
+    `).run();
+  }
+
+  it('warns and skips when GOOGLE_APPLICATION_CREDENTIALS_JSON missing', async () => {
+    delete process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    delete process.env.DIGEST_SENDER_EMAIL;
+    const db = makeDb();
+    makeEmailProfile(db);
+
+    const { logger } = await import('../../../utils/logger');
+    await handleDailyDigestJob(makeDigestJob(), db);
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('GOOGLE_APPLICATION_CREDENTIALS_JSON'),
+    );
+    db.close();
+  });
+
+  it('warns and skips when DIGEST_SENDER_EMAIL not set', async () => {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = JSON.stringify({
+      client_email: 'sa@proj.iam.gserviceaccount.com',
+      private_key: 'FAKE_KEY',
+    });
+    delete process.env.DIGEST_SENDER_EMAIL;
+    const db = makeDb();
+    makeEmailProfile(db);
+
+    const { logger } = await import('../../../utils/logger');
+    await handleDailyDigestJob(makeDigestJob(), db);
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('DIGEST_SENDER_EMAIL'),
+    );
+    db.close();
+  });
+
+  it('calls gmail.users.messages.send when credentials are present', async () => {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = JSON.stringify({
+      client_email: 'sa@proj.iam.gserviceaccount.com',
+      private_key: 'FAKE_KEY',
+    });
+    process.env.DIGEST_SENDER_EMAIL = 'sender@example.com';
+    const db = makeDb();
+    makeEmailProfile(db);
+
+    const { google } = await import('googleapis');
+    const mockSend = vi.mocked(google.gmail({} as any).users.messages.send);
+
+    await handleDailyDigestJob(makeDigestJob(), db);
+
+    expect(mockSend).toHaveBeenCalledOnce();
+    const call = mockSend.mock.calls[0][0];
+    expect(call.userId).toBe('sender@example.com');
+    expect(call.requestBody?.raw).toBeDefined();
+    db.close();
+  });
+
+  it('logs warn (not throw) when Gmail API call fails', async () => {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = JSON.stringify({
+      client_email: 'sa@proj.iam.gserviceaccount.com',
+      private_key: 'FAKE_KEY',
+    });
+    process.env.DIGEST_SENDER_EMAIL = 'sender@example.com';
+    const db = makeDb();
+    makeEmailProfile(db);
+
+    const { google } = await import('googleapis');
+    vi.mocked(google.gmail({} as any).users.messages.send).mockRejectedValueOnce(
+      Object.assign(new Error('unauthorized_client'), { status: 403 }),
+    );
+
+    const { logger } = await import('../../../utils/logger');
+    // Should not throw
+    await expect(handleDailyDigestJob(makeDigestJob(), db)).resolves.toBeUndefined();
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(expect.stringContaining('Email send failed'));
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(expect.stringContaining('domain-wide delegation'));
+    db.close();
+  });
+});
+
+// ── Existing tests ───────────────────────────────────────────────────────────
 
 describe('handleDailyDigestJob', () => {
   beforeEach(() => { vi.clearAllMocks(); });
