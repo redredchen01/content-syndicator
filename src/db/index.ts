@@ -36,6 +36,7 @@ export {
   anchorHistory,
   llmCalls,
   draftBatches,
+  oauthTokens,
 } from './repositories';
 
 export type {
@@ -49,6 +50,7 @@ export type {
   LlmCallKind,
   DraftBatch,
   DraftBatchStatus,
+  OAuthToken,
 } from './repositories';
 
 // ---------------------------------------------------------------------------

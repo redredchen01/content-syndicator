@@ -241,7 +241,9 @@ describe('API Adapter testConnection()', () => {
       process.env.BLOGGER_BLOG_ID = 'blog123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      // BloggerAdapter now prefers OAuth2 user tokens (DB) > service-account JSON (env).
+      // When neither is present it prompts the user to connect via OAuth.
+      expect(result.error).toMatch(/not authorized|not configured/i);
     });
 
     // Note: Full test would require mocking googleapis library
