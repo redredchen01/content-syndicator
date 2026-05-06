@@ -297,4 +297,52 @@ describe('dispatchVariantJobs', () => {
     expect(jobs).toHaveLength(1); // only Medium, not failed Dev.to
     db.close();
   });
+
+  it('3-param call (no roiScores) still works — priority defaults to 0.0', () => {
+    const db = makeDb();
+    const variant = makeVariant(); // Dev.to
+
+    // 3-arg call — must not throw
+    dispatchVariantJobs([variant], 'batch_3arg', db);
+
+    const jobs = db
+      .prepare("SELECT priority FROM publish_jobs WHERE batch_id = 'batch_3arg'")
+      .all() as Array<{ priority: number }>;
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].priority).toBe(0.0);
+    db.close();
+  });
+
+  it('roiScores map sets priority on inserted jobs', () => {
+    const db = makeDb();
+    const variant = makeVariant(); // Dev.to
+
+    const roiScores = new Map([['Dev.to', 0.85]]);
+    dispatchVariantJobs([variant], 'batch_roi', db, roiScores);
+
+    const jobs = db
+      .prepare("SELECT priority FROM publish_jobs WHERE batch_id = 'batch_roi'")
+      .all() as Array<{ priority: number }>;
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].priority).toBeCloseTo(0.85);
+    db.close();
+  });
+
+  it('platform absent from roiScores map gets priority 0.0', () => {
+    const db = makeDb();
+    const variant = makeVariant(); // Dev.to
+    const roiScores = new Map([['Medium', 0.9]]); // Dev.to not in map
+
+    dispatchVariantJobs([variant], 'batch_roi_missing', db, roiScores);
+
+    const jobs = db
+      .prepare("SELECT priority FROM publish_jobs WHERE batch_id = 'batch_roi_missing'")
+      .all() as Array<{ priority: number }>;
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].priority).toBe(0.0);
+    db.close();
+  });
 });
