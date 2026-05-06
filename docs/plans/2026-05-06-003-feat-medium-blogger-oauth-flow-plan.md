@@ -1,7 +1,7 @@
 ---
 title: "feat: Medium 浏览器回退 + Blogger Google OAuth 2.0 用户授权流"
 type: feat
-status: active
+status: completed
 date: 2026-05-06
 origin: docs/plans/2026-05-06-002-feat-browser-platform-login-flow-plan.md
 ---
@@ -181,7 +181,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 1: oauth_tokens DAO + refresh_token 透明加密**
+- [x] **Unit 1: oauth_tokens DAO + refresh_token 透明加密**
 
 **Goal:** 提供干净的读写函数 `getOAuthTokens(platform)` / `saveOAuthTokens(platform, tokens)`，refresh_token 在写入 DB 时加密、读取时解密，调用方拿到的永远是明文。
 
@@ -218,7 +218,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 2: Google OAuth helper 模块**
+- [x] **Unit 2: Google OAuth helper 模块**
 
 **Goal:** 集中 OAuth 客户端构造、auth URL 生成、code 交换、token 刷新逻辑。让路由和适配器都引用同一个 helper，避免多处实例化 OAuth2Client 配置不一致。
 
@@ -257,7 +257,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 3: OAuth 路由 — start + callback**
+- [x] **Unit 3: OAuth 路由 — start + callback**
 
 **Goal:** 用户在 UI 点 Connect → 后端生成 state → 302 到 Google → 同意后回调 → 写库 → 重定向回 admin.html。
 
@@ -308,7 +308,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 4: BloggerAdapter — OAuth tokens 优先 → service account 回退**
+- [x] **Unit 4: BloggerAdapter — OAuth tokens 优先 → service account 回退**
 
 **Goal:** Blogger 发布和 testConnection 都按「user OAuth → service account → 报错」三级回退。
 
@@ -346,7 +346,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 5: 共享 browser-publish helper**
+- [x] **Unit 5: 共享 browser-publish helper**
 
 **Goal:** 把 `BrowserAutomationAdapter.publish()` 中通用的「launch context → goto compose → run customAutomation → close」流程抽出，让 MediumAdapter 在 dual-mode 下能复用，不复制大段代码。
 
@@ -383,7 +383,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 6: MediumAdapter — dual-mode（API 优先 + 浏览器 fallback）**
+- [x] **Unit 6: MediumAdapter — dual-mode（API 优先 + 浏览器 fallback）**
 
 **Goal:** 让 MediumAdapter 在没 API token 时，自动走浏览器 storageState + Playwright 发布；存量 token 用户行为零变化。
 
@@ -435,7 +435,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 7: admin.html — Blogger OAuth 按钮 + Medium 浏览器 fallback 入口**
+- [x] **Unit 7: admin.html — Blogger OAuth 按钮 + Medium 浏览器 fallback 入口**
 
 **Goal:** UI 上让 Blogger 卡片显示「Connect with Google」按钮（OAuth 流），Medium 卡片在 API key 表单旁加「或用浏览器登录」次级按钮。
 
@@ -480,7 +480,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 8: README + .env.example — Google Cloud Console 配置说明**
+- [x] **Unit 8: README + .env.example — Google Cloud Console 配置说明**
 
 **Goal:** 让用户能 5 分钟内完成 Google Cloud Console OAuth Client 配置，跑通本地 OAuth 流程。
 
