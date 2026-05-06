@@ -52,6 +52,8 @@ export interface RoiScoreResult {
 export interface PlatformHealth extends RoiScoreResult {
   daTierLabel: 'Tier1' | 'Tier2' | 'Tier3';
   status: 'active' | 'warn' | 'insufficient';
+  /** Alias for `score` — exposed for frontend compatibility. */
+  roiScore: number;
 }
 
 export interface FilterResult {
@@ -86,7 +88,10 @@ export function getDaTierConfig(db: Database.Database): DaTierConfig {
       tiers: { ...DEFAULT_DA_TIERS, ...overrides },
       threshold,
     };
-  } catch {
+  } catch (err) {
+    logger.warn('[ROI] Failed to read DA tier config; falling back to defaults', {
+      message: err instanceof Error ? err.message : String(err),
+    });
     return { tiers: { ...DEFAULT_DA_TIERS }, threshold: DEFAULT_ROI_THRESHOLD };
   }
 }
@@ -177,6 +182,7 @@ export function computePlatformHealth(db: Database.Database): PlatformHealth[] {
       ...result,
       daTierLabel: daTierLabel(result.daTierScore),
       status,
+      roiScore: result.score, // alias for frontend compatibility
     } satisfies PlatformHealth;
   });
 
@@ -230,8 +236,11 @@ export function filterByRoi(
         }
       }
       return { eligible, skipped, roiScores, engineStatus: 'degraded' };
-    } catch {
-      // If even the fallback fails, pass everything through
+    } catch (fallbackErr) {
+      // If even the fallback fails, pass everything through to keep dispatch alive
+      logger.error('[ROI] Fallback DA tier scoring also failed; passing all variants through', {
+        message: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+      });
       const roiScores = new Map(variants.map((v) => [v.platform, 0.0]));
       return { eligible: variants, skipped: [], roiScores, engineStatus: 'degraded' };
     }

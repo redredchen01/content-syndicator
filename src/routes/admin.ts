@@ -424,7 +424,10 @@ router.get('/api/v2/platform-health', syncRoute((_req, res) => {
     const health = computePlatformHealth(db);
     return res.json(health);
   } catch (err) {
-    logger.warn('[Admin] computePlatformHealth failed, returning insufficient fallback', { err });
+    logger.error('[Admin] computePlatformHealth failed, returning insufficient fallback', {
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     const fallback = (MVP_PLATFORMS as readonly string[]).map((platform) => ({
       platform,
       daTierLabel: 'Tier3' as const,
@@ -459,8 +462,8 @@ router.patch('/api/v2/roi-config', syncRoute((req, res) => {
       if (!(MVP_PLATFORMS as readonly string[]).includes(key)) {
         return res.status(400).json({ error: `Unknown platform: ${key}` });
       }
-      // Validate tier score value
-      if (!VALID_TIER_SCORES.has(val as number)) {
+      // Validate tier score value (explicit typeof prevents type coercion attacks)
+      if (typeof val !== 'number' || !VALID_TIER_SCORES.has(val)) {
         return res.status(400).json({ error: `Invalid tier score for ${key}: must be 0.3, 0.6, or 1.0` });
       }
     }
