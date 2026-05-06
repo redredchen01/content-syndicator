@@ -225,6 +225,13 @@
         </div>
       </div>
 
+      <!-- Inline error for regenerate / dispatch failures (replaces browser alert()) -->
+      <div x-show="publishError"
+           class="bg-red-50 border border-red-200 rounded-xl px-5 py-3 flex items-center justify-between gap-3">
+        <span class="text-sm text-red-700" x-text="publishError"></span>
+        <button @click="publishError = ''" class="text-xs text-red-400 hover:text-red-600 shrink-0">✕</button>
+      </div>
+
       <!-- Dispatch controls -->
       <div class="flex items-center justify-between bg-white rounded-xl border shadow-sm px-5 py-4">
         <div class="text-sm text-gray-600">
@@ -322,6 +329,34 @@
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">錨詞禁用詞（每行一條）</label>
           <textarea x-model="brandForm.anchorBlocklist" rows="3" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none" placeholder="click here&#10;read more"></textarea>
+        </div>
+
+        <!-- Digest channel -->
+        <div class="border-t pt-4">
+          <div class="text-sm font-semibold text-gray-700 mb-3">📬 每日日報渠道</div>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">發送方式</label>
+              <select x-model="brandForm.digestChannel"
+                      class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300">
+                <option value="none">不發送</option>
+                <option value="email">Email（需設定 DIGEST_SENDER_EMAIL）</option>
+                <option value="telegram">Telegram</option>
+              </select>
+            </div>
+            <div x-show="brandForm.digestChannel !== 'none'">
+              <label class="block text-sm font-medium text-gray-700 mb-1"
+                     x-text="brandForm.digestChannel === 'email' ? '收件地址' : 'Telegram Token'"></label>
+              <input x-model="brandForm.digestDestination" type="text"
+                     :placeholder="brandForm.digestChannel === 'email'
+                       ? 'ops@yourdomain.com'
+                       : 'bot<token>:<chatId>  例: bot123456789:abc123'"
+                     class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300">
+              <p x-show="brandForm.digestChannel === 'email'" class="text-xs text-gray-400 mt-1">
+                發件地址在 Settings → Google Sheets / 摘要 中設定（DIGEST_SENDER_EMAIL）
+              </p>
+            </div>
+          </div>
         </div>
 
         <div x-show="brandSaveMsg" :class="brandSaveMsg?.startsWith('✓') ? 'text-green-600' : 'text-red-600'" class="text-sm" x-text="brandSaveMsg"></div>
@@ -652,7 +687,8 @@ function syndicatorApp() {
     // ── Brand ──────────────────────────────────────────
     brandReady: false,
     brandProfile: null,
-    brandForm: { name: '', nameVariants: '', targetUrls: '', blocklist: '', anchorBlocklist: '' },
+    brandForm: { name: '', nameVariants: '', targetUrls: '', blocklist: '', anchorBlocklist: '', digestChannel: 'none', digestDestination: '' },
+    publishError: '',   // inline error for regenerate / dispatch failures (replaces alert())
     brandSaveMsg: '',
 
     // ── Input phase ────────────────────────────────────
@@ -807,6 +843,7 @@ function syndicatorApp() {
       const platform = this.variants[idx]?.platform;
       if (!platform) return;
       this.regenLoading = idx;
+      this.publishError = '';
       try {
         // Send the current siblings so the backend can run full Jaccard lint
         // against the whole batch (not just clear this platform's violation).
@@ -822,7 +859,7 @@ function syndicatorApp() {
         // Apply the full lint result from the backend (includes fresh Jaccard).
         if (data.lintResult) this.lintResult = data.lintResult;
       } catch (e) {
-        alert(`重新生成失敗: ${e.message}`);
+        this.publishError = `重新生成失敗：${e.message}`;
       } finally {
         this.regenLoading = -1;
       }
@@ -843,6 +880,7 @@ function syndicatorApp() {
     // ── Dispatch ───────────────────────────────────────
     async dispatch() {
       this.dispatching = true;
+      this.publishError = '';
       try {
         const activeVariants = this.variants.filter(
           v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform)
@@ -852,7 +890,7 @@ function syndicatorApp() {
           .filter(v => v.anchor_words?.includes('__naked_url__'))
           .map(v => v.platform);
         if (nakedPlatforms.length > 0) {
-          alert(`無法發佈：${nakedPlatforms.join('、')} 的錨詞生成失敗，請重新生成後再發佈`);
+          this.publishError = `無法發佈：${nakedPlatforms.join('、')} 的錨詞生成失敗，請重新生成後再發佈`;
           return;
         }
         const res = await fetch('/api/v2/dispatch', {
@@ -869,7 +907,7 @@ function syndicatorApp() {
         this.draftTitle = '';
         this.draftCharCount = 0;
       } catch (e) {
-        alert(`發佈失敗: ${e.message}`);
+        this.publishError = `發佈失敗：${e.message}`;
       } finally {
         this.dispatching = false;
       }
@@ -909,6 +947,8 @@ function syndicatorApp() {
         targetUrls: (p.target_urls || []).map(t => `${t.url} ${t.context_tag}`).join('\n'),
         blocklist: (p.exposure_blocklist || []).join('\n'),
         anchorBlocklist: (p.anchor_blocklist || []).join('\n'),
+        digestChannel: p.digest_channel || 'none',
+        digestDestination: p.digest_destination || '',
       };
     },
     async saveBrand() {
@@ -922,6 +962,8 @@ function syndicatorApp() {
         }),
         exposure_blocklist: this.brandForm.blocklist.split('\n').map(s => s.trim()).filter(Boolean),
         anchor_blocklist: this.brandForm.anchorBlocklist.split('\n').map(s => s.trim()).filter(Boolean),
+        digest_channel: this.brandForm.digestChannel,
+        digest_destination: this.brandForm.digestDestination.trim() || null,
       };
       try {
         const res = await fetch('/api/v2/brand-profile', {
