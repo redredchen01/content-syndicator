@@ -1,7 +1,7 @@
 ---
 title: "feat: Twitter / X OAuth 2.0 PKCE + auth-strategy abstraction"
 type: feat
-status: active
+status: completed
 date: 2026-05-06
 origin: docs/plans/2026-05-06-003-feat-medium-blogger-oauth-flow-plan.md
 ---
@@ -202,7 +202,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 1: AuthStrategy interface + refactor google-oauth**
+- [x] **Unit 1: AuthStrategy interface + refactor google-oauth**
 
 **Goal:** 把 google-oauth.ts 的导出函数收敛成一个 `GoogleAuthStrategy` 对象（实现 `AuthStrategy` 接口），路由层通过 strategy 查询而非直接 import 函数。Twitter strategy 接入时无需修改路由层抽象。
 
@@ -242,7 +242,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 2: TwitterAuthStrategy + PKCE helper**
+- [x] **Unit 2: TwitterAuthStrategy + PKCE helper**
 
 **Goal:** 实现 Twitter OAuth 2.0 PKCE 完整 flow 的 strategy 模块。
 
@@ -291,7 +291,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 3: /api/auth/twitter/start + /callback + DELETE /api/auth/oauth/twitter**
+- [x] **Unit 3: /api/auth/twitter/start + /callback + DELETE /api/auth/oauth/twitter**
 
 **Goal:** Twitter 的 start / callback / delete 路由，复用 google flow 的 state Map + redirect 模式。
 
@@ -342,7 +342,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 4: TwitterAdapter dual-mode（OAuth 2.0 优先 + OAuth 1.0a 回退）**
+- [x] **Unit 4: TwitterAdapter dual-mode（OAuth 2.0 优先 + OAuth 1.0a 回退）**
 
 **Goal:** TwitterAdapter 在 oauth_tokens.twitter 行存在时走 OAuth 2.0 Bearer；否则走现有 OAuth 1.0a env keys；两者都没就报错。
 
@@ -383,7 +383,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 5: admin.html — Twitter Connect with X 按钮 + /api/platforms 字段**
+- [x] **Unit 5: admin.html — Twitter Connect with X 按钮 + /api/platforms 字段**
 
 **Goal:** Twitter 卡片显示「Connect with X」按钮（同 Blogger 三态视觉），`/api/platforms` 反映 Twitter 的 OAuth 状态。
 
@@ -422,7 +422,7 @@ flowchart TB
 
 ---
 
-- [ ] **Unit 6: X Developer Portal 配置文档 + .env.example**
+- [x] **Unit 6: X Developer Portal 配置文档 + .env.example**
 
 **Goal:** 让用户能 5 分钟在 X Developer Portal 完成 OAuth 2.0 client 配置。
 
