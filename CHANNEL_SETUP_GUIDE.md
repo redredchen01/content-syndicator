@@ -298,3 +298,52 @@ openssl rand -hex 32  # 复制结果到 .env 的 ENCRYPTION_KEY
 OAUTH_ALLOW_REMOTE=true
 ```
 **前提是**：你的反向代理必须对所有 admin/auth 路径强制鉴权（basic auth、JWT、SSO 等）。否则相当于把这些端点直接暴露给公网。
+
+---
+
+## Twitter / X — OAuth 2.0 PKCE 配置（推荐）
+
+新接入推荐走 OAuth 2.0 PKCE，admin.html 一键 Connect with X。OAuth 1.0a（4 个 keys）保留作为 fallback，存量用户零迁移。
+
+### 5 分钟操作步骤
+
+1. 进 [X Developer Portal](https://developer.x.com/en/portal/dashboard)
+2. **Create Project** → 起个名字，选 use case → Create App
+3. App 设置页 → 找 **User authentication settings** → 点 **Set up**
+   - **App permissions**：选 **Read and write**（仅 Read 不能发推）
+   - **Type of App**：选 **Web App, Automated App or Bot**
+   - **Callback URI / Redirect URL**：填 `http://localhost:3000/api/auth/twitter/callback`
+   - **Website URL**：随便填一个真实 URL（X 要求非空，不会真访问）
+   - 保存
+4. 跳到 **Keys and Tokens** 页 → **OAuth 2.0 Client ID and Client Secret** 段
+5. **Generate** → 拷贝 Client ID 和 Client Secret 到 `.env`：
+   ```
+   TWITTER_OAUTH_CLIENT_ID=...
+   TWITTER_OAUTH_CLIENT_SECRET=...
+   TWITTER_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/twitter/callback
+   ```
+6. 重启 server：`npm start`
+7. admin.html → Twitter 卡片显示蓝色 **「Connect with X」** → 点击 → X 同意页 → Allow → 自动回到 admin
+
+### 关键约束
+
+- **Callback URI 必须完全匹配** — 任何 `http://` vs `https://`、端口号、尾斜杠差异都会被 X 拒绝
+- **scope `offline.access` 是必需的** — 没有这个 scope，X 不会返回 `refresh_token`，token 一过期（2 小时）就废
+- **App permissions 必须是 Read and write** — Read-only 拿到 token 也无法发推
+- **Free tier 月限额** — X 的免费 tier 每月发推数量有限，超了 OAuth 2.0 token 一样不能用（但 token 仍然有效，限额重置后自动恢复）
+
+### 故障排查
+
+**「invalid_client」错误**
+- Client ID 或 Secret 拷错了 / 多了空格
+
+**「Redirect URI not registered」**
+- X Developer Portal 的 Callback URI 设置必须和 `.env` 的 `TWITTER_OAUTH_REDIRECT_URI` 完全一致
+
+**「Twitter did not return a refresh_token」**
+- App permissions 不是 Read and write，或者 scope 设置错了
+- 解决：在 X Developer Portal 调整权限，然后用户重新授权
+
+**OAuth 2.0 路径连不通，但有旧的 OAuth 1.0a keys**
+- 不删 `TWITTER_CONSUMER_KEY` 等环境变量，TwitterAdapter 会自动 fallback 到 OAuth 1.0a 路径
+- 旧 4-key 用户零迁移
