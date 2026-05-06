@@ -18,6 +18,11 @@ import {
   getAdapterId,
   createBrowserAuthContext,
 } from '../services/browser-session';
+import { isOAuthConfigured } from '../services/google-oauth';
+import { oauthTokens } from '../db/oauth-tokens';
+
+// Platforms that support real Google OAuth 2.0 user-flow.
+const OAUTH_SUPPORTED_PLATFORMS = new Set(['Blogger']);
 
 export { getAdapterId, hasSavedBrowserSession };
 
@@ -53,8 +58,17 @@ function hasStoredApiKey(platformId: string): boolean {
 function isAdapterConnected(adapter: PlatformAdapter): boolean {
   if (adapter.isBrowserAutomation) return isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter);
   const adapterConnected = API_CONNECTED[adapter.name]?.() ?? false;
-  // Also check if there's a stored API key
-  return adapterConnected || hasStoredApiKey(getAdapterId(adapter));
+  if (adapterConnected) return true;
+  if (hasStoredApiKey(getAdapterId(adapter))) return true;
+  // OAuth user-flow: a stored refresh_token in oauth_tokens counts as connected
+  if (OAUTH_SUPPORTED_PLATFORMS.has(adapter.name) && oauthTokens.exists(db, getAdapterId(adapter))) {
+    return true;
+  }
+  // Hybrid (Medium): a saved browser session + browser automation enabled
+  if (adapter.supportsBrowserFallback && isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter)) {
+    return true;
+  }
+  return false;
 }
 
 function isDefaultPublishTarget(adapter: PlatformAdapter) {
@@ -106,14 +120,25 @@ export function resolveTargetPlatforms(platforms?: unknown) {
 }
 
 router.get('/api/platforms', syncRoute((req, res) => {
-  const platforms = allAdapters.map(a => ({
-    name: a.name,
-    id: getAdapterId(a),
-    ...getPlatformStatus(a),
-    browserAutomation: Boolean(a.isBrowserAutomation),
-    browserAuthSupported: Boolean(a.isBrowserAutomation),
-    canPublishAutomatically: Boolean(a.canPublishAutomatically || !a.isBrowserAutomation),
-  }));
+  const oauthConfigured = isOAuthConfigured();
+  const platforms = allAdapters.map(a => {
+    const id = getAdapterId(a);
+    const supportsOAuth = OAUTH_SUPPORTED_PLATFORMS.has(a.name);
+    const oauthConnected = supportsOAuth && oauthTokens.exists(db, id);
+    return {
+      name: a.name,
+      id,
+      ...getPlatformStatus(a),
+      browserAutomation: Boolean(a.isBrowserAutomation),
+      browserAuthSupported: Boolean(a.isBrowserAutomation || a.supportsBrowserFallback),
+      canPublishAutomatically: Boolean(a.canPublishAutomatically || !a.isBrowserAutomation),
+      supportsOAuth,
+      oauthConfigured: supportsOAuth ? oauthConfigured : false,
+      oauthConnected,
+      supportsBrowserFallback: Boolean(a.supportsBrowserFallback),
+      browserSessionExists: hasSavedBrowserSession(a),
+    };
+  });
   res.json({ platforms, defaults: getDefaultPublishingPlatforms() });
 }));
 

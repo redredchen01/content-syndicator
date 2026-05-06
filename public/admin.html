@@ -648,16 +648,52 @@
         const isDefault = data.defaults.includes(p.name);
         const badgeClass = p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700';
 
-        const actionBtn = p.browserAutomation
-          ? `<button type="button" id="browser-btn-${p.id}"
-                     class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
-                     onclick="startBrowserLogin('${p.id}')">
-               ${p.connected ? '重新连接' : '1-Click Connect'}
-             </button>`
-          : `<button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
-                     onclick="openApiKeyForm('${p.id}', '${p.name}')">
-               ${p.connected ? '更新' : '连接'}
-             </button>`;
+        let actionBtn;
+        if (p.supportsOAuth) {
+          if (!p.oauthConfigured) {
+            actionBtn = `<button type="button" disabled
+                         class="ml-2 px-3 py-1 text-sm border border-slate-200 rounded bg-slate-50 text-slate-400 cursor-not-allowed"
+                         title="请在 .env 配置 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / OAUTH_REDIRECT_URI">
+                         Connect with Google
+                       </button>`;
+          } else if (p.oauthConnected) {
+            actionBtn = `<div class="flex gap-2">
+                         <a href="/api/auth/google/start?platform=${p.id}"
+                            class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50">
+                           重新授权
+                         </a>
+                         <button type="button"
+                            class="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50"
+                            onclick="disconnectOAuth('${p.id}')">
+                           断开
+                         </button>
+                       </div>`;
+          } else {
+            actionBtn = `<a href="/api/auth/google/start?platform=${p.id}"
+                          class="ml-2 px-3 py-1 text-sm border border-blue-300 text-blue-700 rounded hover:bg-blue-50">
+                          Connect with Google
+                        </a>`;
+          }
+        } else if (p.browserAutomation) {
+          actionBtn = `<button type="button" id="browser-btn-${p.id}"
+                       class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                       onclick="startBrowserLogin('${p.id}')">
+                       ${p.connected ? '重新连接' : '1-Click Connect'}
+                     </button>`;
+        } else {
+          actionBtn = `<button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                       onclick="openApiKeyForm('${p.id}', '${p.name}')">
+                       ${p.connected ? '更新' : '连接'}
+                     </button>`;
+        }
+
+        // Hybrid platforms (e.g. Medium): show secondary "use browser login" link
+        const fallbackLink = p.supportsBrowserFallback
+          ? `<a href="javascript:void(0)" onclick="startBrowserLogin('${p.id}')"
+                 class="text-xs text-blue-600 hover:underline ml-2">
+                 ${p.browserSessionExists ? '已存在浏览器登录会话' : '或使用浏览器登录（API token 可选）'}
+               </a>`
+          : '';
 
         return `
           <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
@@ -667,9 +703,11 @@
                 <span id="browser-badge-${p.id}" class="text-xs px-2 py-1 rounded ${badgeClass}">
                   ${statusText}
                 </span>
+                ${p.supportsOAuth ? '<span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-500">OAuth</span>' : ''}
                 ${p.browserAutomation ? '<span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-500">浏览器</span>' : ''}
                 ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
               </div>
+              ${fallbackLink}
               ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
               ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
             </div>
@@ -687,6 +725,59 @@
       console.error('Failed to load platforms:', err);
     }
   }
+
+  // ── OAuth disconnect ──────────────────────────────────────────────────────
+  async function disconnectOAuth(platformId) {
+    if (!confirm(`确认断开 ${platformId} 的 OAuth 连接？`)) return;
+    try {
+      const res = await fetch(`/api/auth/oauth/${platformId}`, { method: 'DELETE' });
+      if (res.ok) {
+        showOAuthToast(`已断开 ${platformId}`, 'info');
+        platformsCacheTime = 0;
+        loadPlatformsWithCaching();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showOAuthToast(`断开失败：${data.error || '未知错误'}`, 'error');
+      }
+    } catch (err) {
+      showOAuthToast(`网络错误：${err.message}`, 'error');
+    }
+  }
+
+  // ── OAuth callback toast ──────────────────────────────────────────────────
+  function showOAuthToast(message, kind) {
+    const colors = {
+      success: 'bg-green-50 border-green-300 text-green-800',
+      error:   'bg-red-50 border-red-300 text-red-800',
+      info:    'bg-blue-50 border-blue-300 text-blue-800',
+    };
+    const toast = document.createElement('div');
+    toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg border shadow-lg ${colors[kind] || colors.info}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+  }
+
+  function handleOAuthRedirect() {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('connected');
+    const oauthError = params.get('oauth_error');
+    if (connected) {
+      showOAuthToast(`✅ 已成功连接 ${connected}`, 'success');
+      params.delete('connected');
+    }
+    if (oauthError) {
+      showOAuthToast(`OAuth 失败：${oauthError}`, 'error');
+      params.delete('oauth_error');
+    }
+    if (connected || oauthError) {
+      const newQuery = params.toString();
+      const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '') + window.location.hash;
+      window.history.replaceState({}, '', newUrl);
+      platformsCacheTime = 0;
+    }
+  }
+  handleOAuthRedirect();
 
   loadPlatformsWithCaching();
   setInterval(() => {
