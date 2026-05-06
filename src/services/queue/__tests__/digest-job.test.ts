@@ -123,7 +123,7 @@ describe('handleDailyDigestJob — email channel', () => {
     await handleDailyDigestJob(makeDigestJob(), db);
 
     expect(mockSend).toHaveBeenCalledOnce();
-    const call = mockSend.mock.calls[0][0];
+    const call = mockSend.mock.calls[0][0] as any; // googleapis type doesn't expose params directly
     expect(call.userId).toBe('sender@example.com');
     expect(call.requestBody?.raw).toBeDefined();
     db.close();
@@ -196,7 +196,8 @@ describe('handleDailyDigestJob', () => {
 });
 
 describe('Telegram token parsing — full-token format', () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: any;
 
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -227,7 +228,7 @@ describe('Telegram token parsing — full-token format', () => {
     const url = fetchSpy.mock.calls[0][0] as string;
     // botToken = '123' (just numeric id, legacy)
     expect(url).toContain('bot123/sendMessage');
-    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit)?.body as string);
     expect(body.chat_id).toBe('chatid456');
     db.close();
   });
@@ -239,7 +240,7 @@ describe('Telegram token parsing — full-token format', () => {
     const url = fetchSpy.mock.calls[0][0] as string;
     // botToken = '1234567890:AABBCCDDEEFF' (full token including hash)
     expect(url).toContain('bot1234567890:AABBCCDDEEFF/sendMessage');
-    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit)?.body as string);
     expect(body.chat_id).toBe('987654321');
     db.close();
   });

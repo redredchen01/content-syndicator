@@ -109,7 +109,7 @@ describe('generateMarkdown — empty content guard', () => {
   it('returns result when title and content are non-empty', async () => {
     mockOpenAIResponse('Good Title', 'Good content here');
     const { generateMarkdown } = await import('../index');
-    const result = await generateMarkdown({ title: 'src', content: 'src content', url: 'http://x' });
+    const result = await generateMarkdown({ title: 'src', content: 'src content', originalUrl: 'http://x' });
     expect(result.title).toBe('Good Title');
     expect(result.content).toBe('Good content here');
   });
@@ -118,7 +118,7 @@ describe('generateMarkdown — empty content guard', () => {
     mockOpenAIResponse('', 'Some content');
     const { generateMarkdown } = await import('../index');
     await expect(
-      generateMarkdown({ title: 'src', content: 'src content', url: 'http://x' }),
+      generateMarkdown({ title: 'src', content: 'src content', originalUrl: 'http://x' }),
     ).rejects.toThrow('LLM returned empty title or content');
   });
 
@@ -126,7 +126,7 @@ describe('generateMarkdown — empty content guard', () => {
     mockOpenAIResponse('Title', '   ');
     const { generateMarkdown } = await import('../index');
     await expect(
-      generateMarkdown({ title: 'src', content: 'src content', url: 'http://x' }),
+      generateMarkdown({ title: 'src', content: 'src content', originalUrl: 'http://x' }),
     ).rejects.toThrow('LLM returned empty title or content');
   });
 
@@ -136,7 +136,7 @@ describe('generateMarkdown — empty content guard', () => {
     });
     const { generateMarkdown } = await import('../index');
     await expect(
-      generateMarkdown({ title: 'src', content: 'src content', url: 'http://x' }),
+      generateMarkdown({ title: 'src', content: 'src content', originalUrl: 'http://x' }),
     ).rejects.toThrow('LLM returned empty title or content');
   });
 });

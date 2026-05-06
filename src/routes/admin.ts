@@ -284,7 +284,7 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
     const prevValue = process.env[envVar]; // capture before overwriting
     process.env[envVar] = apiKey;
 
-    let testResult: Awaited<ReturnType<NonNullable<typeof adapter.testConnection>>>;
+    let testResult: Awaited<ReturnType<NonNullable<typeof adapter.testConnection>>> | undefined;
     try {
       testResult = await adapter.testConnection?.();
     } catch (e: any) {
