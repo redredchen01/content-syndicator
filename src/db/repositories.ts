@@ -80,6 +80,8 @@ export interface PublishJob {
   metadata_json: string;
   created_at: string;
   updated_at: string;
+  /** ROI score (0.0–1.0) used for dequeue ordering. Default 0.0 for pre-ROI rows. */
+  priority: number;
 }
 
 export type LinkCheckType = 't24h' | 't7d' | 't30d';
@@ -290,6 +292,8 @@ export const publishJobs = {
       scheduled_at: string;
       payload?: unknown;
       metadata?: unknown;
+      /** ROI score written at dispatch time. Defaults to 0.0 (lowest priority). */
+      priority?: number;
     },
   ): number {
     // OR IGNORE makes (batch_id, variant_id, platform, job_type) UNIQUE
@@ -297,8 +301,8 @@ export const publishJobs = {
     const stmt = db.prepare(`
       INSERT OR IGNORE INTO publish_jobs (
         batch_id, variant_id, platform, job_type, payload_json,
-        scheduled_at, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        scheduled_at, metadata_json, priority
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       job.batch_id,
@@ -308,6 +312,7 @@ export const publishJobs = {
       JSON.stringify(job.payload ?? {}),
       job.scheduled_at,
       JSON.stringify(job.metadata ?? {}),
+      job.priority ?? 0.0,
     );
     return Number(result.lastInsertRowid);
   },
@@ -322,7 +327,7 @@ export const publishJobs = {
         .prepare(`
           SELECT * FROM publish_jobs
           WHERE status = 'scheduled' AND scheduled_at <= ?
-          ORDER BY scheduled_at ASC
+          ORDER BY priority DESC, scheduled_at ASC
           LIMIT ?
         `)
         .all(now, lim) as PublishJob[];
@@ -471,22 +476,50 @@ export const linkChecks = {
     return Number(result.lastInsertRowid);
   },
 
-  /** Returns survival rate for a check_type over the trailing N days. */
+  /**
+   * Returns survival rate for a check_type over the trailing N days.
+   * Pass an optional `platform` to scope the query to a single platform
+   * (used by the ROI scorer for per-platform scoring).
+   */
   survivalRate(
     db: Database.Database,
     checkType: LinkCheckType,
     sinceIso: string,
+    platform?: string,
   ): { total: number; alive: number; rate: number } {
+    const wherePlatform = platform ? 'AND platform = ?' : '';
+    const params: unknown[] = platform
+      ? [checkType, sinceIso, platform]
+      : [checkType, sinceIso];
     const row = db.prepare(`
       SELECT
         SUM(CASE WHEN classification IN ('alive','redirect_alive') THEN 1 ELSE 0 END) AS alive,
         COUNT(*) AS total
       FROM link_checks
-      WHERE check_type = ? AND checked_at >= ?
-    `).get(checkType, sinceIso) as { alive: number | null; total: number };
+      WHERE check_type = ? AND checked_at >= ? ${wherePlatform}
+    `).get(...params) as { alive: number | null; total: number };
     const alive = row.alive ?? 0;
     const total = row.total;
     return { total, alive, rate: total === 0 ? 0 : alive / total };
+  },
+
+  /**
+   * Returns the number of link_check records for a platform + check_type within
+   * the trailing window. Used by the ROI scorer to determine cold-start status
+   * (< 5 records → fall back to DA tier only).
+   */
+  survivalRecordCount(
+    db: Database.Database,
+    checkType: LinkCheckType,
+    platform: string,
+    sinceIso: string,
+  ): number {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS cnt
+      FROM link_checks
+      WHERE check_type = ? AND platform = ? AND checked_at >= ?
+    `).get(checkType, platform, sinceIso) as { cnt: number };
+    return row.cnt;
   },
 };
 

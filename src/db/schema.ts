@@ -237,4 +237,24 @@ export function applyV2Schema(db: Database.Database): void {
       updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // ROI auto-ranking: DA tier config + skip threshold per brand
+  addColumnIfMissing(db, 'brand_profiles', 'da_tier_config_json', "TEXT DEFAULT '{}'");
+  addColumnIfMissing(db, 'brand_profiles', 'roi_threshold', 'REAL DEFAULT 0.3');
+
+  // ROI auto-ranking: priority column for queue ordering (REAL preserves score precision)
+  addColumnIfMissing(db, 'publish_jobs', 'priority', 'REAL NOT NULL DEFAULT 0.0');
+
+  // Rebuild dispatch index to include priority DESC for ROI-ordered dequeue
+  db.exec('DROP INDEX IF EXISTS idx_publish_jobs_dispatch');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_publish_jobs_dispatch
+      ON publish_jobs(status, priority DESC, scheduled_at ASC)
+  `);
+
+  // Index for per-platform survival rate queries (Unit 2 / ROI scorer)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_link_checks_platform_type
+      ON link_checks(platform, check_type, checked_at)
+  `);
 }

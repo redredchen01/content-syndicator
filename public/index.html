@@ -238,7 +238,10 @@
           <span x-text="activeVariantCount"></span> 個平台準備發佈
           <span x-show="skippedPlatforms.size > 0" class="text-gray-400" x-text="`（已跳過 ${skippedPlatforms.size} 個）`"></span>
         </div>
-        <div class="flex gap-3">
+        <div class="flex items-center gap-3">
+          <!-- ROI engine degraded badge -->
+          <span x-show="roiEngineStatus === 'degraded'"
+                class="text-[11px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">ROI 評分引擎降級運行</span>
           <button @click="phase = 'input'" class="text-sm px-4 py-2 border rounded-lg hover:bg-gray-50">← 重新輸入</button>
           <button @click="dispatch()"
                   :disabled="!canDispatch || dispatching"
@@ -253,10 +256,53 @@
       <div x-show="!canDispatch && lintHasBatchViolation" class="text-xs text-amber-600 text-center">
         批次 Jaccard 相似度過高 — 請重新生成相似的 tab 再發佈
       </div>
+
+      <!-- ── ROI Skip Card (Unit 8) ────────────────────────────────── -->
+      <div x-show="skipCard.visible"
+           class="bg-white rounded-xl border border-orange-200 shadow-sm p-5 space-y-3">
+        <div class="font-semibold text-gray-800 text-sm">以下平台因 ROI 分數過低已跳過</div>
+
+        <!-- Skipped platform checkboxes -->
+        <div class="space-y-2">
+          <template x-for="item in skipCard.items" :key="item.platform">
+            <label class="flex items-center gap-2 cursor-pointer"
+                   :class="skipCard.overriding ? 'opacity-50 pointer-events-none' : ''">
+              <input type="checkbox" :value="item.platform" x-model="skipCard.selected"
+                     class="w-4 h-4 rounded border-gray-300">
+              <span class="text-sm text-gray-700">
+                <span x-text="item.platform"></span>
+                <span class="text-gray-400 ml-1">— ROI 分: <span x-text="item.score.toFixed(2)"></span></span>
+                <span class="text-orange-500 text-xs ml-1">(<span x-text="item.reason"></span>)</span>
+              </span>
+            </label>
+          </template>
+        </div>
+
+        <!-- Inline override error -->
+        <div x-show="skipCard.overrideError"
+             class="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded"
+             x-text="skipCard.overrideError"></div>
+
+        <!-- Action buttons -->
+        <div class="flex gap-3 pt-1">
+          <button @click="skipCard.visible = false; skipCard.items = []; skipCard.selected = []; skipCard.overrideError = ''"
+                  :disabled="skipCard.overriding"
+                  class="text-sm px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50">
+            跳過，繼續
+          </button>
+          <button @click="dispatchOverride()"
+                  :disabled="skipCard.selected.length === 0 || skipCard.overriding"
+                  :class="skipCard.selected.length > 0 && !skipCard.overriding ? 'bg-orange-500 hover:bg-orange-600' : 'bg-gray-300 cursor-not-allowed'"
+                  class="text-sm px-5 py-2 rounded-lg text-white font-semibold transition-colors">
+            <span x-show="!skipCard.overriding">強制發布所選 (<span x-text="skipCard.selected.length"></span>)</span>
+            <span x-show="skipCard.overriding">發布中...</span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ══ VIEW: Queue Status ════════════════════════════════════════ -->
-    <div x-show="view === 'queue'" x-cloak>
+    <div x-show="view === 'queue'" x-cloak class="space-y-4">
       <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
         <div class="px-5 py-3 border-b flex justify-between items-center">
           <span class="font-medium text-gray-700 text-sm">作業佇列</span>
@@ -293,6 +339,96 @@
                   <td class="px-4 py-2 text-gray-500" x-text="job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString() : '-'"></td>
                   <td class="px-4 py-2 text-gray-500" x-text="job.attempts"></td>
                   <td class="px-4 py-2 text-red-500 max-w-xs truncate" x-text="job.last_error || ''"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Platform Health Table ─────────────────────────────────── -->
+      <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b flex justify-between items-center">
+          <span class="font-medium text-gray-700 text-sm">平台健康</span>
+          <span class="text-xs text-gray-400">每 5 秒刷新</span>
+        </div>
+
+        <!-- Loading state: skeleton rows -->
+        <div x-show="platformHealthLoading && platformHealth.length === 0" class="px-5 py-4 space-y-2">
+          <template x-for="i in [1,2,3,4,5,6,7]" :key="i">
+            <div class="h-7 bg-gray-100 rounded animate-pulse"></div>
+          </template>
+        </div>
+
+        <!-- Error state -->
+        <div x-show="platformHealthError && !platformHealthLoading" class="py-10 text-center text-sm text-red-500">
+          無法加載平台健康數據，請稍後重試
+        </div>
+
+        <!-- Empty state -->
+        <div x-show="!platformHealthLoading && !platformHealthError && platformHealth.length === 0" class="py-10 text-center text-sm text-gray-400">
+          暫無平台數據
+        </div>
+
+        <!-- Normal state: table -->
+        <div x-show="platformHealth.length > 0" class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead class="bg-gray-50 border-b">
+              <tr>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium cursor-pointer select-none hover:text-gray-700"
+                    @click="sortPlatformHealth('platform')">
+                  平台名
+                  <span x-text="phSortArrow('platform')"></span>
+                </th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium cursor-pointer select-none hover:text-gray-700"
+                    @click="sortPlatformHealth('daTierLabel')">
+                  DA Tier
+                  <span x-text="phSortArrow('daTierLabel')"></span>
+                </th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium cursor-pointer select-none hover:text-gray-700"
+                    @click="sortPlatformHealth('t7dRate')">
+                  T7d 存活率
+                  <span x-text="phSortArrow('t7dRate')"></span>
+                </th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium cursor-pointer select-none hover:text-gray-700"
+                    @click="sortPlatformHealth('t30dRate')">
+                  T30d 存活率
+                  <span x-text="phSortArrow('t30dRate')"></span>
+                </th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium cursor-pointer select-none hover:text-gray-700"
+                    @click="sortPlatformHealth('roiScore')">
+                  ROI 分
+                  <span x-text="phSortArrow('roiScore')"></span>
+                </th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">狀態</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <template x-for="row in platformHealthSorted" :key="row.platform">
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-2 font-medium text-gray-700" x-text="row.platform"></td>
+                  <td class="px-4 py-2 text-gray-500" x-text="row.daTierLabel"></td>
+                  <td class="px-4 py-2 text-gray-600" x-text="row.dataInsufficient ? '—' : Math.round(row.t7dRate * 100) + '%'"></td>
+                  <td class="px-4 py-2 text-gray-600" x-text="row.dataInsufficient ? '—' : Math.round(row.t30dRate * 100) + '%'"></td>
+                  <td class="px-4 py-2">
+                    <template x-if="row.dataInsufficient">
+                      <span class="text-gray-400">—</span>
+                    </template>
+                    <template x-if="!row.dataInsufficient">
+                      <span class="flex items-center gap-1">
+                        <span x-text="row.roiScore.toFixed(2)"></span>
+                        <span x-show="row.status === 'warn'" class="bg-orange-100 text-orange-600 text-[10px] px-1 py-0.5 rounded font-medium">!</span>
+                      </span>
+                    </template>
+                  </td>
+                  <td class="px-4 py-2">
+                    <span x-show="row.dataInsufficient"
+                          class="bg-gray-100 text-gray-500 text-[11px] px-2 py-0.5 rounded-full font-medium">數據不足</span>
+                    <span x-show="!row.dataInsufficient && row.status === 'warn'"
+                          class="bg-orange-100 text-orange-700 text-[11px] px-2 py-0.5 rounded-full font-medium">低ROI</span>
+                    <span x-show="!row.dataInsufficient && row.status === 'active'"
+                          class="bg-green-100 text-green-700 text-[11px] px-2 py-0.5 rounded-full font-medium">正常</span>
+                  </td>
                 </tr>
               </template>
             </tbody>
@@ -745,6 +881,56 @@ function syndicatorApp() {
       return this.queueJobs.filter(j => ['scheduled', 'running', 'failed_retryable'].includes(j.status)).length;
     },
 
+    // ── Platform Health (Unit 7) ───────────────────────
+    platformHealth: [],
+    platformHealthLoading: false,
+    platformHealthError: false,
+    phSortCol: 'roiScore',
+    phSortDir: 'asc',
+
+    get platformHealthSorted() {
+      const col = this.phSortCol;
+      const dir = this.phSortDir === 'asc' ? 1 : -1;
+      return [...this.platformHealth].sort((a, b) => {
+        // insufficient rows always sort to bottom
+        if (a.dataInsufficient && !b.dataInsufficient) return 1;
+        if (!a.dataInsufficient && b.dataInsufficient) return -1;
+        if (a.dataInsufficient && b.dataInsufficient) return 0;
+        const av = a[col], bv = b[col];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === 'string') return dir * av.localeCompare(bv);
+        return dir * (av - bv);
+      });
+    },
+
+    sortPlatformHealth(col) {
+      if (this.phSortCol === col) {
+        this.phSortDir = this.phSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        this.phSortCol = col;
+        this.phSortDir = 'asc';
+      }
+    },
+
+    phSortArrow(col) {
+      if (this.phSortCol !== col) return ' ↕';
+      return this.phSortDir === 'asc' ? ' ↑' : ' ↓';
+    },
+
+    // ── Dispatch skip card (Unit 8) ────────────────────
+    roiEngineStatus: null,
+    dispatchBatchId: null,
+    dispatchVariants: [],
+    skipCard: {
+      visible: false,
+      items: [],        // [{ platform, score, reason }]
+      selected: [],     // selected platform names for override
+      overriding: false,
+      overrideError: '',
+    },
+
     // ── History ────────────────────────────────────────
     historyItems: [],
 
@@ -802,8 +988,15 @@ function syndicatorApp() {
       if (this.view === 'settings' && id !== 'settings') {
         Object.keys(this.sectionMsgs).forEach(k => { this.sectionMsgs[k] = { text: '', kind: 'ok' }; });
       }
+      // Clear skip card when navigating to queue tab
+      if (id === 'queue') {
+        this.skipCard.visible = false;
+        this.skipCard.items = [];
+        this.skipCard.selected = [];
+        this.skipCard.overrideError = '';
+      }
       this.view = id;
-      if (id === 'queue')   { this.loadQueue(); this.startQueuePolling(); } else { this.stopQueuePolling(); }
+      if (id === 'queue')   { this.loadQueue(); this.loadPlatformHealth(); this.startQueuePolling(); } else { this.stopQueuePolling(); }
       if (id === 'history') this.loadHistory();
       if (id === 'settings'){ this.loadSettings(); this.loadPlatforms(); this.loadModels(); }
       if (id === 'brand')   this.loadBrandForm();
@@ -900,7 +1093,22 @@ function syndicatorApp() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-        // Show queue
+
+        // Store dispatch response metadata for override flow (Unit 8)
+        this.roiEngineStatus = data.roiEngineStatus || null;
+        this.dispatchBatchId = data.batchId || this.batchId;
+        this.dispatchVariants = data.variants || activeVariants;
+
+        // If some platforms were skipped by ROI engine, show skip card
+        if (data.skipped && data.skipped.length > 0) {
+          this.skipCard.items = data.skipped;
+          this.skipCard.selected = [];
+          this.skipCard.overrideError = '';
+          this.skipCard.overriding = false;
+          this.skipCard.visible = true;
+        }
+
+        // Navigate to queue and reset publish form
         this.switchView('queue');
         this.phase = 'input';
         this.draft = '';
@@ -910,6 +1118,48 @@ function syndicatorApp() {
         this.publishError = `發佈失敗：${e.message}`;
       } finally {
         this.dispatching = false;
+      }
+    },
+
+    // ── Dispatch Override (Unit 8) ─────────────────────
+    async dispatchOverride() {
+      const selectedPlatforms = this.skipCard.selected;
+      if (selectedPlatforms.length === 0) return;
+
+      // Full-override warning when all skipped platforms are selected
+      if (selectedPlatforms.length === this.skipCard.items.length) {
+        const confirmed = window.confirm(`即將向全部 ${selectedPlatforms.length} 個被跳過的平台強制發布，確認繼續？`);
+        if (!confirmed) return;
+      }
+
+      this.skipCard.overriding = true;
+      this.skipCard.overrideError = '';
+      try {
+        // Build variants list for selected platforms from stored dispatch variants
+        const selectedVariants = this.dispatchVariants.filter(v => selectedPlatforms.includes(v.platform));
+        const res = await fetch('/api/v2/dispatch/override', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            batchId: this.dispatchBatchId,
+            platforms: selectedPlatforms,
+            variants: selectedVariants,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        // Success: clear skip card and navigate to queue
+        this.skipCard.visible = false;
+        this.skipCard.items = [];
+        this.skipCard.selected = [];
+        this.skipCard.overrideError = '';
+        this.flashToast(`✓ 已強制發布至 ${selectedPlatforms.length} 個平台`, 'ok');
+        this.switchView('queue');
+      } catch (e) {
+        this.skipCard.overrideError = `強制發布失敗：${e.message}`;
+      } finally {
+        this.skipCard.overriding = false;
       }
     },
 
@@ -923,10 +1173,28 @@ function syndicatorApp() {
     },
     startQueuePolling() {
       this.stopQueuePolling();
-      this.queueTimer = setInterval(() => this.loadQueue(), 5000);
+      this.queueTimer = setInterval(() => { this.loadQueue(); this.loadPlatformHealth(); }, 5000);
     },
     stopQueuePolling() {
       if (this.queueTimer) { clearInterval(this.queueTimer); this.queueTimer = null; }
+    },
+
+    // ── Platform Health (Unit 7) ───────────────────────
+    async loadPlatformHealth() {
+      this.platformHealthLoading = true;
+      this.platformHealthError = false;
+      try {
+        const res = await fetch('/api/v2/platform-health');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        this.platformHealth = Array.isArray(data) ? data : (data.platforms || []);
+        this.platformHealthError = false;
+      } catch (e) {
+        console.warn('[loadPlatformHealth]', e);
+        this.platformHealthError = true;
+      } finally {
+        this.platformHealthLoading = false;
+      }
     },
 
     // ── Brand ──────────────────────────────────────────

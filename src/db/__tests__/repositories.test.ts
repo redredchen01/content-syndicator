@@ -256,6 +256,60 @@ describe('linkChecks', () => {
     expect(rate).toBe(0);
     expect(total).toBe(0);
   });
+
+  it('survivalRate with platform filter isolates per-platform results', () => {
+    // Medium: 3 alive t7d
+    for (let i = 0; i < 3; i++) {
+      linkChecks.insert(db, {
+        batch_id: `m${i}`, variant_id: 'v', platform: 'Medium',
+        published_url: `https://medium.com/${i}`, check_type: 't7d',
+        http_status: 200, classification: 'alive',
+      });
+    }
+    // Medium: 1 dead t7d
+    linkChecks.insert(db, {
+      batch_id: 'md', variant_id: 'v', platform: 'Medium',
+      published_url: 'https://medium.com/dead', check_type: 't7d',
+      http_status: 404, classification: '404',
+    });
+    // Dev.to: 2 alive t7d — should not affect Medium query
+    for (let i = 0; i < 2; i++) {
+      linkChecks.insert(db, {
+        batch_id: `d${i}`, variant_id: 'v', platform: 'Dev.to',
+        published_url: `https://dev.to/${i}`, check_type: 't7d',
+        http_status: 200, classification: 'alive',
+      });
+    }
+
+    const medium = linkChecks.survivalRate(db, 't7d', '2020-01-01T00:00:00Z', 'Medium');
+    expect(medium.total).toBe(4);
+    expect(medium.alive).toBe(3);
+    expect(medium.rate).toBeCloseTo(0.75, 5);
+
+    // aggregate (no platform) includes all 6
+    const all = linkChecks.survivalRate(db, 't7d', '2020-01-01T00:00:00Z');
+    expect(all.total).toBe(6);
+  });
+
+  it('survivalRecordCount returns exact count within window for platform', () => {
+    for (let i = 0; i < 5; i++) {
+      linkChecks.insert(db, {
+        batch_id: `h${i}`, variant_id: 'v', platform: 'Hashnode',
+        published_url: `https://hashnode.com/${i}`, check_type: 't7d',
+        http_status: 200, classification: 'alive',
+      });
+    }
+    // different platform — should not be counted
+    linkChecks.insert(db, {
+      batch_id: 'other', variant_id: 'v', platform: 'Blogger',
+      published_url: 'https://blogger.com/1', check_type: 't7d',
+      http_status: 200, classification: 'alive',
+    });
+
+    expect(linkChecks.survivalRecordCount(db, 't7d', 'Hashnode', '2020-01-01T00:00:00Z')).toBe(5);
+    expect(linkChecks.survivalRecordCount(db, 't7d', 'Medium', '2020-01-01T00:00:00Z')).toBe(0);
+    expect(linkChecks.survivalRecordCount(db, 't30d', 'Hashnode', '2020-01-01T00:00:00Z')).toBe(0);
+  });
 });
 
 describe('anchorHistory', () => {
