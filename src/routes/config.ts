@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { resetLLMClients } from '../llm/client';
 import { getRawPrompts, saveRawPrompts } from '../llm';
 import { allAdapters } from '../adapters/index';
-import { syncRoute, asyncRoute } from './_helpers';
+import { asyncRoute, syncRoute } from './_helpers';
 import {
   AUTH_DIR,
   getBrowserAuthMode,
@@ -16,7 +16,21 @@ import {
 
 export const router = express.Router();
 
-const ENV_PATH = path.join(process.cwd(), '.env');
+let ENV_PATH = path.join(process.cwd(), '.env');
+/** For tests only — redirect which file updateEnv reads/writes. */
+export function _setEnvPath(p: string) { ENV_PATH = p; }
+
+// ── Concurrency-safe .env writer ───────────────────────
+// Promise-chain mutex: each caller queues behind the previous write.
+// Atomic write (tmp → rename) prevents partial files on crash.
+let _envWriteLock: Promise<void> = Promise.resolve();
+
+function withEnvLock<T>(fn: () => Promise<T>): Promise<T> {
+  const result = _envWriteLock.then(fn);
+  // Update lock to current op; swallow outcome so queue never stalls on error.
+  _envWriteLock = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 function getMaskedEnv() {
   const mask = (val?: string) => val && val.length > 4 ? '*'.repeat(val.length - 4) + val.slice(-4) : (val ? '****' : '');
@@ -48,36 +62,42 @@ function getMaskedEnv() {
   };
 }
 
-function updateEnv(newConfig: Record<string, string>) {
-  let envContent = '';
-  if (fs.existsSync(ENV_PATH)) {
-    envContent = fs.readFileSync(ENV_PATH, 'utf8');
-  }
+async function updateEnv(newConfig: Record<string, string>): Promise<void> {
+  return withEnvLock(async () => {
+    let envContent = '';
+    if (fs.existsSync(ENV_PATH)) {
+      envContent = fs.readFileSync(ENV_PATH, 'utf8');
+    }
 
-  for (const [key, value] of Object.entries(newConfig)) {
-    if (value && value.trim() !== '') {
-      process.env[key] = value.trim();
-      const regex = new RegExp(`^${key}=.*$`, 'm');
-      if (regex.test(envContent)) {
-        envContent = envContent.replace(regex, `${key}=${value.trim()}`);
-      } else {
-        envContent += `\n${key}=${value.trim()}`;
+    for (const [key, value] of Object.entries(newConfig)) {
+      if (value && value.trim() !== '') {
+        process.env[key] = value.trim();
+        const regex = new RegExp(`^${key}=.*$`, 'm');
+        if (regex.test(envContent)) {
+          envContent = envContent.replace(regex, `${key}=${value.trim()}`);
+        } else {
+          envContent += `\n${key}=${value.trim()}`;
+        }
       }
     }
-  }
-  fs.writeFileSync(ENV_PATH, envContent.trim() + '\n', 'utf8');
 
-  const llmKeys = ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'SELECTED_MODEL'];
-  if (Object.keys(newConfig).some(k => llmKeys.includes(k))) {
-    resetLLMClients();
-  }
+    // Atomic write: tmp file → rename so a mid-write crash never corrupts .env
+    const tmpPath = `${ENV_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, envContent.trim() + '\n', 'utf8');
+    fs.renameSync(tmpPath, ENV_PATH);
+
+    const llmKeys = ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'SELECTED_MODEL'];
+    if (Object.keys(newConfig).some(k => llmKeys.includes(k))) {
+      resetLLMClients();
+    }
+  });
 }
 
 router.get('/api/settings', (req, res) => {
   res.json(getMaskedEnv());
 });
 
-router.post('/api/settings', syncRoute((req, res) => {
+router.post('/api/settings', asyncRoute(async (req, res) => {
   const KEYS = [
     'GEMINI_API_KEY', 'OPENAI_API_KEY', 'DEVTO_API_KEY', 'MEDIUM_INTEGRATION_TOKEN',
     'GOOGLE_APPLICATION_CREDENTIALS_JSON', 'GOOGLE_SHEET_ID', 'SELECTED_MODEL',
@@ -86,7 +106,7 @@ router.post('/api/settings', syncRoute((req, res) => {
     'ENABLE_BROWSER_AUTOMATION', 'BROWSER_AUTH_MODE',
     'BROWSER_AUTH_CHROME_USER_DATA_DIR', 'BROWSER_AUTH_CHROME_PROFILE',
   ] as const;
-  updateEnv(Object.fromEntries(KEYS.map(k => [k, req.body[k]])));
+  await updateEnv(Object.fromEntries(KEYS.map(k => [k, req.body[k]])));
   logger.success('Settings updated successfully via Web UI.');
   res.json({ success: true, message: 'Settings saved' });
 }));

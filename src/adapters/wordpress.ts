@@ -1,4 +1,4 @@
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
 function escapeHtml(input: string) {
   return input
@@ -49,6 +49,29 @@ function markdownToHtml(markdown: string, originalUrl?: string): string {
 export class WordPressAdapter extends BaseAdapter {
   name = 'WordPress';
   canPublishAutomatically = true;
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const siteUrl = process.env.WORDPRESS_SITE_URL?.replace(/\/+$/, '');
+    const username = process.env.WORDPRESS_USERNAME;
+    const appPassword = process.env.WORDPRESS_APP_PASSWORD;
+    if (!siteUrl || !username || !appPassword) {
+      return { ok: false, error: 'WORDPRESS_SITE_URL, WORDPRESS_USERNAME, or WORDPRESS_APP_PASSWORD not configured' };
+    }
+
+    try {
+      const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
+      const response = await fetch(`${siteUrl}/wp-json/wp/v2/users/me`, {
+        headers: { Authorization: `Basic ${auth}` },
+      });
+
+      if (!response.ok) {
+        return { ok: false, error: `${response.status} ${response.statusText}` };
+      }
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
+    }
+  }
 
   async publish(options: PublishOptions): Promise<PublishResult> {
     const siteUrl = process.env.WORDPRESS_SITE_URL?.replace(/\/+$/, '');

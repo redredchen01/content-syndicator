@@ -5,10 +5,11 @@ import { logger } from '../utils/logger';
 import { PlatformAdapter } from '../adapters/base';
 import { allAdapters } from '../adapters/index';
 import { db } from '../db';
-import { getProfile, saveProfile, isReadyForDispatch } from '../services/brand-profile';
+import { getProfile, saveProfile, isReadyForDispatch, updatePreferredPlatforms, getPreferredPlatforms } from '../services/brand-profile';
 import { runPrecheck } from '../services/anchor-monitor';
 import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
+import { encryptApiKey, decryptApiKey } from '../utils/encryption';
 import {
   AUTH_DIR,
   getBrowserAuthMode,
@@ -33,9 +34,25 @@ const API_CONNECTED: Record<string, () => boolean> = {
   'WordPress':  () => Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD),
 };
 
+function hasStoredApiKey(platformId: string): boolean {
+  try {
+    const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
+      { api_keys_encrypted?: string } | undefined;
+    if (result?.api_keys_encrypted) {
+      const apiKeys = JSON.parse(result.api_keys_encrypted);
+      return Boolean(apiKeys[platformId]);
+    }
+  } catch (e) {
+    logger.warn(`Failed to check stored API key for ${platformId}`);
+  }
+  return false;
+}
+
 function isAdapterConnected(adapter: PlatformAdapter): boolean {
   if (adapter.isBrowserAutomation) return isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter);
-  return API_CONNECTED[adapter.name]?.() ?? false;
+  const adapterConnected = API_CONNECTED[adapter.name]?.() ?? false;
+  // Also check if there's a stored API key
+  return adapterConnected || hasStoredApiKey(getAdapterId(adapter));
 }
 
 function isDefaultPublishTarget(adapter: PlatformAdapter) {
@@ -59,7 +76,20 @@ function getPlatformStatus(adapter: PlatformAdapter) {
     reason = 'Ready for default auto-publish';
   }
 
-  return { connected, defaultEligible, reason };
+  // Get test status from database
+  let testStatus: any = { connected_at: null, last_test_error: null, test_timestamp: null };
+  try {
+    const result = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
+      { platform_test_status?: string } | undefined;
+    if (result?.platform_test_status) {
+      const statusMap = JSON.parse(result.platform_test_status);
+      testStatus = statusMap[getAdapterId(adapter)] || testStatus;
+    }
+  } catch (e) {
+    logger.warn(`Failed to read platform test status: ${e}`);
+  }
+
+  return { connected, defaultEligible, reason, ...testStatus };
 }
 
 export function getDefaultPublishingPlatforms() {
@@ -213,5 +243,220 @@ router.post('/api/auth/test', async (req, res) => {
       ? ' If you selected common Chrome profile mode, close all Chrome windows first or switch to Installed Chrome, separate profile.'
       : '';
     if (!res.headersSent) res.status(500).json({ error: `${message}${profileHint}` });
+  }
+});
+
+// PATCH /api/platforms/:platformId/api-key — update and validate API key
+router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
+  try {
+    const { platformId } = req.params;
+    const { apiKey } = req.body ?? {};
+
+    if (typeof apiKey !== 'string' || apiKey.trim().length === 0) {
+      return res.status(400).json({ error: 'API key is required' });
+    }
+
+    // Find adapter
+    const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
+    if (!adapter || adapter.isBrowserAutomation) {
+      return res.status(404).json({ error: 'Platform not found or is browser automation' });
+    }
+
+    logger.info(`[Admin] Testing API key for ${adapter.name}...`);
+
+    // Validate API key by calling testConnection() with the new key.
+    // Map platformId to the environment variable it reads from.
+    const envKeyMap: Record<string, string> = {
+      'devto': 'DEVTO_API_KEY',
+      'medium': 'MEDIUM_INTEGRATION_TOKEN',
+      'hashnode': 'HASHNODE_TOKEN',
+      'github': 'GITHUB_TOKEN',
+      'blogger': 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+      'wordpress': 'WORDPRESS_SITE_URL',
+      'telegraph': 'TELEGRA_PH_TOKEN',
+    };
+
+    const envVar = envKeyMap[platformId];
+    if (!envVar) {
+      return res.status(404).json({ error: 'Cannot validate this platform type' });
+    }
+
+    const prevValue = process.env[envVar]; // capture before overwriting
+    process.env[envVar] = apiKey;
+
+    let testResult: Awaited<ReturnType<NonNullable<typeof adapter.testConnection>>>;
+    try {
+      testResult = await adapter.testConnection?.();
+    } catch (e: any) {
+      // Restore on unexpected throw; on validation failure we restore below too
+      if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
+      throw e; // re-throw so asyncRoute returns 500
+    }
+
+    if (testResult && !testResult.ok) {
+      // Validation failed — restore the previous key so process.env stays clean
+      if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
+      logger.warn(`[Admin] API key validation failed for ${adapter.name}: ${testResult.error}`);
+      return res.status(422).json({ ok: false, error: testResult.error });
+    }
+    // Success: keep the new key in process.env (it is now the active credential)
+
+    // Encrypt and store API key
+    const encrypted = encryptApiKey(apiKey);
+
+    // Get existing API keys
+    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
+      { api_keys_encrypted?: string } | undefined;
+    let apiKeys: Record<string, string> = {};
+    if (profileRow?.api_keys_encrypted) {
+      try { apiKeys = JSON.parse(profileRow.api_keys_encrypted); }
+      catch (e) { logger.warn('Failed to parse existing API keys, starting fresh'); }
+    }
+
+    apiKeys[platformId] = encrypted;
+
+    const now = new Date().toISOString();
+    const testStatus: Record<string, any> = {};
+    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
+      { platform_test_status?: string } | undefined;
+    if (statusRow?.platform_test_status) {
+      try { Object.assign(testStatus, JSON.parse(statusRow.platform_test_status)); } catch (e) {}
+    }
+
+    testStatus[platformId] = {
+      connected_at: now,
+      last_test_error: null,
+      test_timestamp: now,
+    };
+
+    db.prepare(`
+      UPDATE brand_profiles
+      SET api_keys_encrypted = ?, platform_test_status = ?, updated_at = ?
+      WHERE brand_id = 'default'
+    `).run(JSON.stringify(apiKeys), JSON.stringify(testStatus), now);
+
+    logger.info(`[Admin] API key stored successfully for ${adapter.name}`);
+
+    res.json({
+      ok: true,
+      platform: adapter.name,
+      connected_at: now,
+      test_timestamp: now,
+    });
+  } catch (error: any) {
+    logger.error('[Admin] Failed to update API key', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Failed to update API key',
+    });
+  }
+});
+
+// PATCH /api/v2/brand-profile/preferred-platforms — update preferred publishing platforms
+router.patch('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
+  try {
+    const { platforms } = req.body ?? {};
+
+    if (!Array.isArray(platforms)) {
+      return res.status(400).json({ error: 'platforms must be an array' });
+    }
+
+    const result = updatePreferredPlatforms(db, platforms);
+    if (!result.ok) {
+      return res.status(422).json({ error: result.error });
+    }
+
+    const preferred = getPreferredPlatforms(db);
+    logger.info(`[Admin] Updated preferred platforms: ${preferred.join(', ')}`);
+
+    res.json({
+      ok: true,
+      preferredPlatforms: preferred,
+    });
+  } catch (error: any) {
+    logger.error('[Admin] Failed to update preferred platforms', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Failed to update preferred platforms',
+    });
+  }
+}));
+
+// GET /api/v2/brand-profile/preferred-platforms — get current preferred platforms
+router.get('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
+  try {
+    const preferred = getPreferredPlatforms(db);
+    res.json({ preferredPlatforms: preferred });
+  } catch (error: any) {
+    logger.error('[Admin] Failed to get preferred platforms', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Failed to get preferred platforms',
+    });
+  }
+}));
+
+// POST /api/platforms/batch-validate — validate multiple API keys in parallel
+router.post('/api/platforms/batch-validate', async (req, res) => {
+  try {
+    const { credentials } = req.body ?? {};
+    if (!Array.isArray(credentials)) {
+      return res.status(400).json({ error: 'credentials must be an array' });
+    }
+
+    const results = await Promise.all(
+      credentials.map(async (cred: any) => {
+        const platformId = cred.platformId as string;
+        const apiKey = cred.apiKey as string;
+
+        if (typeof platformId !== 'string' || typeof apiKey !== 'string') {
+          return { platformId, ok: false, error: 'Invalid input' };
+        }
+
+        const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
+        if (!adapter || adapter.isBrowserAutomation) {
+          return { platformId, ok: false, error: 'Platform not found or is browser automation' };
+        }
+
+        logger.info(`[Admin] Testing API key for ${adapter.name}...`);
+
+        const envKeyMap: Record<string, string> = {
+          'devto': 'DEVTO_API_KEY',
+          'medium': 'MEDIUM_INTEGRATION_TOKEN',
+          'hashnode': 'HASHNODE_TOKEN',
+          'github': 'GITHUB_TOKEN',
+          'blogger': 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+          'wordpress': 'WORDPRESS_SITE_URL',
+          'telegraph': 'TELEGRA_PH_TOKEN',
+        };
+
+        const envVar = envKeyMap[platformId];
+        if (!envVar) {
+          return { platformId, ok: false, error: 'Cannot validate this platform type' };
+        }
+
+        // Batch-validate only tests — always restore the original value afterward.
+        const prevValue = process.env[envVar];
+        process.env[envVar] = apiKey;
+        try {
+          const testResult = await adapter.testConnection?.();
+          return {
+            platformId,
+            ok: testResult?.ok ?? true,
+            error: testResult?.error,
+          };
+        } finally {
+          if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
+        }
+      }),
+    );
+
+    res.json({ results });
+  } catch (error: any) {
+    logger.error('[Admin] Batch validation failed', error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Batch validation failed',
+    });
   }
 });

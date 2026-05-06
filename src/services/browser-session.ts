@@ -1,8 +1,12 @@
 import path from 'path';
 import fs from 'fs';
+import { Readable } from 'stream';
 import { chromium } from 'playwright';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { Extract } = require('unzipper') as { Extract: (opts: { path: string }) => NodeJS.WritableStream };
 import { acquirePage } from '../utils/browserManager';
 import { PlatformAdapter } from '../adapters/base';
+import { allAdapters } from '../adapters';
 
 export const AUTH_DIR = path.join(process.cwd(), '.auth');
 const DEFAULT_CHROME_USER_DATA_DIR = path.join(process.env.HOME || '', 'Library', 'Application Support', 'Google', 'Chrome');
@@ -89,4 +93,97 @@ export async function createBrowserAuthContext(platform: string) {
 // Ensure auth directory exists on module load
 if (!fs.existsSync(AUTH_DIR)) {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
+}
+
+export interface ImportSessionsResult {
+  imported: string[];
+  failed: Array<{ platform: string; error: string }>;
+  tested: Record<string, { ok: boolean; error?: string }>;
+}
+
+export async function importSessions(zipBuffer: Buffer): Promise<ImportSessionsResult> {
+  const result: ImportSessionsResult = { imported: [], failed: [], tested: {} };
+
+  // Build a map of valid platform IDs
+  const validPlatformIds = new Set(allAdapters.map(adapter => getAdapterId(adapter)));
+
+  return new Promise((resolve, reject) => {
+    const entries: Array<{ fileName: string; content: string }> = [];
+    let processingError: Error | null = null;
+
+    Readable.from([zipBuffer])
+      .pipe(Extract({ path: AUTH_DIR }))
+      .on('entry', (entry) => {
+        const fileName = entry.path;
+
+        // Only process files in .auth/ directory with .json extension
+        if (!fileName.startsWith('.auth/') || !fileName.endsWith('.json')) {
+          entry.autodrain();
+          return;
+        }
+
+        let content = '';
+        entry.on('data', (chunk: Buffer) => {
+          content += chunk.toString();
+        });
+
+        entry.on('end', () => {
+          entries.push({ fileName, content });
+        });
+
+        entry.on('error', (err: Error) => {
+          if (!processingError) processingError = err;
+        });
+      })
+      .on('error', (err: Error) => {
+        if (!processingError) processingError = err;
+      })
+      .on('finish', async () => {
+        // Process all entries after extraction is done
+        if (processingError) {
+          reject(processingError);
+          return;
+        }
+
+        try {
+          for (const { fileName, content } of entries) {
+            const platformId = fileName.replace('.auth/', '').replace('.json', '');
+
+            // Validate platform ID
+            if (!validPlatformIds.has(platformId)) {
+              result.failed.push({ platform: platformId, error: 'Unknown platform' });
+              continue;
+            }
+
+            try {
+              const json = JSON.parse(content);
+
+              // Validate basic structure (cookies and origins arrays)
+              if (!Array.isArray(json.cookies) || !Array.isArray(json.origins)) {
+                result.failed.push({ platform: platformId, error: 'Invalid session format: missing cookies or origins' });
+                continue;
+              }
+
+              // Write to .auth directory
+              const outputPath = path.join(AUTH_DIR, `${platformId}.json`);
+              fs.writeFileSync(outputPath, content, 'utf-8');
+              result.imported.push(platformId);
+
+              // Test connection for imported platform
+              const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
+              if (adapter) {
+                const testResult = await adapter.testConnection?.();
+                if (testResult) result.tested[platformId] = testResult;
+              }
+            } catch (e: any) {
+              result.failed.push({ platform: platformId, error: `Invalid JSON: ${e.message}` });
+            }
+          }
+
+          resolve(result);
+        } catch (e) {
+          reject(e);
+        }
+      });
+  });
 }

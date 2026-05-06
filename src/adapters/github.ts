@@ -1,4 +1,4 @@
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
 export class GitHubAdapter extends BaseAdapter {
   name = 'GitHub';
@@ -28,6 +28,24 @@ export class GitHubAdapter extends BaseAdapter {
       return this.ok(data.html_url);
     } catch (error: any) {
       return this.fail(error);
+    }
+  }
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) return { ok: false, error: 'API key not configured' };
+
+    try {
+      const response = await fetch('https://api.github.com/user', {
+        headers: { Authorization: `token ${token}` },
+      });
+
+      if (!response.ok) {
+        return { ok: false, error: `${response.status} ${response.statusText}` };
+      }
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
     }
   }
 }

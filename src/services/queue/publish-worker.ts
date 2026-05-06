@@ -65,6 +65,7 @@ export async function handlePublishJob(job: PublishJob, db: Database.Database): 
         `[PublishWorker] Idempotent skip: ${job.platform} batch=${job.batch_id} already published at ${existing.published_url}`,
       );
       await syncSideEffects(job, variant, existing.published_url, db);
+      publishJobs.markSucceededWithUrl(db, job.id, existing.published_url);
       return;
     }
   }
@@ -72,7 +73,7 @@ export async function handlePublishJob(job: PublishJob, db: Database.Database): 
   // 3. Platform whitelist
   if (!MVP_PLATFORMS.includes(job.platform as (typeof MVP_PLATFORMS)[number])) {
     logger.info(`[PublishWorker] ${job.platform} not in MVP_PLATFORMS, skipping`);
-    // Mark as skipped by not throwing — Scheduler will see void return = success.
+    publishJobs.markSkipped(db, job.id, 'Not in MVP_PLATFORMS');
     return;
   }
 
@@ -109,7 +110,8 @@ export async function handlePublishJob(job: PublishJob, db: Database.Database): 
     throw err;
   }
 
-  // 5. Success — sync all side-effects
+  // 5. Success — persist terminal state then sync side-effects
+  publishJobs.markSucceededWithUrl(db, job.id, publishedUrl);
   await syncSideEffects(job, variant, publishedUrl, db);
   logger.info(`[PublishWorker] ${job.platform} published: ${publishedUrl}`);
 }
@@ -124,11 +126,11 @@ async function syncSideEffects(
   publishedUrl: string,
   db: Database.Database,
 ): Promise<void> {
-  // Upsert posts row (UNIQUE on batch_id + platform prevents duplicates on retry)
+  // Upsert posts row — platform + published_url required for idempotency guard
   try {
     db.prepare(`
-      INSERT INTO posts (original_url, title, content, results_json, batch_id)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO posts (original_url, title, content, results_json, batch_id, platform, published_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT DO NOTHING
     `).run(
       variant.target_url,
@@ -136,6 +138,8 @@ async function syncSideEffects(
       variant.body_markdown,
       JSON.stringify([{ platform: job.platform, success: true, publishedUrl }]),
       job.batch_id,
+      job.platform,
+      publishedUrl,
     );
   } catch (err: any) {
     logger.warn(`[PublishWorker] posts upsert failed: ${err.message}`);

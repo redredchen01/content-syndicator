@@ -1,8 +1,8 @@
 import { logger } from '../utils/logger';
-import type { PublishResult, PublishOptions, PlatformAdapter } from '../types';
+import type { PublishResult, PublishOptions, PlatformAdapter, TestConnectionResult } from '../types';
 
 // Re-export for adapter files that import from './base'
-export type { PublishResult, PublishOptions, PlatformAdapter };
+export type { PublishResult, PublishOptions, PlatformAdapter, TestConnectionResult };
 
 /** Shared helpers — extend instead of implementing PlatformAdapter directly. */
 export abstract class BaseAdapter implements PlatformAdapter {

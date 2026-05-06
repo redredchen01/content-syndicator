@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>渠道绑定向导 — 第三方口吻外链分发工具</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .step-dot { @apply w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-colors; }
+    .step-dot.active { @apply bg-blue-500 text-white; }
+    .step-dot.completed { @apply bg-green-500 text-white; }
+    .step-dot.inactive { @apply bg-slate-200 text-slate-400; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<div class="min-h-screen flex flex-col">
+  <!-- Progress Bar -->
+  <div class="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 shadow-sm">
+    <div class="max-w-4xl mx-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h1 class="text-xl font-semibold">渠道绑定向导</h1>
+        <span class="text-sm text-slate-500" id="progress-text">第 1 步，共 4 步</span>
+      </div>
+      <div class="flex gap-3">
+        <div class="flex-1 flex items-center gap-2">
+          <div class="step-dot active" id="step1-dot">1</div>
+          <span class="text-sm font-medium">品牌档案</span>
+        </div>
+        <div class="w-12 bg-slate-300 h-px self-center"></div>
+        <div class="flex-1 flex items-center gap-2">
+          <div class="step-dot inactive" id="step2-dot">2</div>
+          <span class="text-sm font-medium">API 渠道</span>
+        </div>
+        <div class="w-12 bg-slate-300 h-px self-center"></div>
+        <div class="flex-1 flex items-center gap-2">
+          <div class="step-dot inactive" id="step3-dot">3</div>
+          <span class="text-sm font-medium">浏览器渠道</span>
+        </div>
+        <div class="w-12 bg-slate-300 h-px self-center"></div>
+        <div class="flex-1 flex items-center gap-2">
+          <div class="step-dot inactive" id="step4-dot">4</div>
+          <span class="text-sm font-medium">完成</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="flex-1 px-6 py-8">
+    <div class="max-w-2xl mx-auto">
+      <div id="status-message" class="hidden mb-4 px-4 py-3 rounded-lg text-sm"></div>
+
+      <!-- Step 1: Brand Profile -->
+      <div id="step-1" class="step-content space-y-6">
+        <div>
+          <h2 class="text-lg font-semibold mb-4">步骤 1：创建品牌档案</h2>
+          <p class="text-slate-600 mb-6">在开始分发前，请先设置您的品牌基本信息。</p>
+        </div>
+
+        <form id="brand-form" class="space-y-4 bg-white p-6 rounded-xl border border-slate-200">
+          <div>
+            <label class="block text-sm font-medium mb-2" for="brand-name">品牌名 *</label>
+            <input id="brand-name" type="text" required
+                   placeholder="如：我的品牌"
+                   class="w-full border border-slate-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-300" />
+            <div id="brand-name-error" class="text-red-600 text-sm mt-1 hidden"></div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium mb-2" for="brand-url">网站 URL *</label>
+            <input id="brand-url" type="url" required
+                   placeholder="如：https://example.com"
+                   class="w-full border border-slate-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-300" />
+            <div id="brand-url-error" class="text-red-600 text-sm mt-1 hidden"></div>
+          </div>
+
+          <div class="pt-4 flex gap-3 justify-end">
+            <button type="button" onclick="goStep(2)" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+              继续 →
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Step 2: API Channels -->
+      <div id="step-2" class="step-content hidden space-y-6">
+        <div>
+          <h2 class="text-lg font-semibold mb-4">步骤 2：配置 API 渠道</h2>
+          <p class="text-slate-600 mb-6">粘贴您各个平台的 API 密钥。所有密钥都会被加密存储。</p>
+        </div>
+
+        <div id="api-channels" class="space-y-4 bg-white p-6 rounded-xl border border-slate-200">
+          <!-- Dynamically populated -->
+        </div>
+
+        <div class="pt-4 flex gap-3 justify-between">
+          <button type="button" onclick="goStep(1)" class="px-4 py-2 border border-slate-300 rounded-md hover:bg-slate-50">
+            ← 返回
+          </button>
+          <div class="flex gap-3">
+            <button type="button" onclick="goStep(3)" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+              继续 →
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Browser Channels (Optional) -->
+      <div id="step-3" class="step-content hidden space-y-6">
+        <div>
+          <h2 class="text-lg font-semibold mb-4">步骤 3：浏览器自动化（可选）</h2>
+          <p class="text-slate-600 mb-6">您可以使用浏览器自动化来发布到更多平台，或跳过此步骤。</p>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl border border-slate-200 space-y-4">
+          <label class="flex items-center gap-3">
+            <input type="checkbox" id="enable-browser-automation"
+                   class="w-4 h-4 rounded border-slate-300" />
+            <span class="text-sm font-medium">启用浏览器自动化</span>
+          </label>
+
+          <div id="browser-automation-options" class="hidden space-y-3 pl-7">
+            <p class="text-sm text-slate-600">
+              您可以：<br />
+              • 上传之前保存的会话 ZIP 文件<br />
+              • 逐个登入各个平台
+            </p>
+            <input type="file" id="session-zip" accept=".zip"
+                   class="block w-full text-sm border border-slate-300 rounded-md p-2" />
+          </div>
+        </div>
+
+        <div class="pt-4 flex gap-3 justify-between">
+          <button type="button" onclick="goStep(2)" class="px-4 py-2 border border-slate-300 rounded-md hover:bg-slate-50">
+            ← 返回
+          </button>
+          <button type="button" onclick="goStep(4)" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+            继续 →
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 4: Preferred Platforms & Completion -->
+      <div id="step-4" class="step-content hidden space-y-6">
+        <div>
+          <h2 class="text-lg font-semibold mb-4">步骤 4：设置首选发布平台</h2>
+          <p class="text-slate-600 mb-6">选择默认发布的平台。发布时会自动使用这些平台。</p>
+        </div>
+
+        <div id="preferred-platforms" class="bg-white p-6 rounded-xl border border-slate-200 space-y-3">
+          <!-- Dynamically populated based on connected platforms -->
+        </div>
+
+        <div class="pt-4 flex gap-3 justify-between">
+          <button type="button" onclick="goStep(3)" class="px-4 py-2 border border-slate-300 rounded-md hover:bg-slate-50">
+            ← 返回
+          </button>
+          <button type="button" onclick="completeOnboarding()" id="complete-btn"
+                  class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600">
+            完成设置
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentStep = 1;
+  const platforms = ['Dev.to', 'Medium', 'Hashnode', 'GitHub', 'Blogger', 'WordPress', 'Telegra.ph'];
+  const apiKeysMap = {};
+  const validationInProgress = new Set();
+
+  // Initialize
+  window.addEventListener('DOMContentLoaded', async () => {
+    // Check if already initialized
+    const checkRes = await fetch('/onboarding');
+    const checkData = await checkRes.json();
+    if (checkData.initialized) {
+      window.location.href = '/admin.html';
+      return;
+    }
+
+    renderStep(1);
+    loadSavedProgress();
+  });
+
+  function renderStep(step) {
+    // Hide all steps
+    document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
+
+    // Show current step
+    const stepEl = document.getElementById(`step-${step}`);
+    if (stepEl) stepEl.classList.remove('hidden');
+
+    // Update progress indicators
+    for (let i = 1; i <= 4; i++) {
+      const dot = document.getElementById(`step${i}-dot`);
+      if (i < step) {
+        dot.className = 'step-dot completed';
+        dot.textContent = '✓';
+      } else if (i === step) {
+        dot.className = 'step-dot active';
+        dot.textContent = i;
+      } else {
+        dot.className = 'step-dot inactive';
+        dot.textContent = i;
+      }
+    }
+
+    // Update progress text
+    document.getElementById('progress-text').textContent = `第 ${step} 步，共 4 步`;
+
+    // Render step-specific content
+    if (step === 2) renderApiChannels();
+    if (step === 4) renderPreferredPlatforms();
+  }
+
+  function renderApiChannels() {
+    const container = document.getElementById('api-channels');
+    container.innerHTML = platforms.map(platform => `
+      <div class="pb-4 border-b border-slate-200 last:border-0">
+        <div class="flex items-center justify-between mb-2">
+          <label class="block text-sm font-medium">${platform}</label>
+          <span class="text-xs text-slate-500" data-status="${platform}"></span>
+        </div>
+        <input type="password" data-platform="${platform}"
+               placeholder="粘贴 API 密钥或 token"
+               class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300" />
+      </div>
+    `).join('');
+
+    // Auto-validate on blur with deduplication
+    container.querySelectorAll('input').forEach(input => {
+      input.addEventListener('blur', async (e) => {
+        const platform = e.target.dataset.platform;
+        const key = e.target.value.trim();
+        if (!key) return;
+
+        // Skip if validation already in progress for this platform
+        if (validationInProgress.has(platform)) return;
+
+        const statusEl = container.querySelector(`[data-status="${platform}"]`);
+        statusEl.textContent = '验证中...';
+        statusEl.className = 'text-xs text-slate-500';
+        validationInProgress.add(platform);
+
+        try {
+          const platformId = platform.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const res = await fetch(`/api/platforms/${platformId}/api-key`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey: key }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            statusEl.textContent = '✓ 验证成功';
+            statusEl.className = 'text-xs text-green-600';
+            apiKeysMap[platform] = key;
+          } else {
+            const data = await res.json();
+            statusEl.textContent = `✗ ${data.error || '验证失败'}`;
+            statusEl.className = 'text-xs text-red-600';
+          }
+        } catch (err) {
+          statusEl.textContent = `✗ 网络错误`;
+          statusEl.className = 'text-xs text-red-600';
+        } finally {
+          validationInProgress.delete(platform);
+        }
+      });
+    });
+  }
+
+  function renderPreferredPlatforms() {
+    const container = document.getElementById('preferred-platforms');
+    const connectedPlatforms = Object.keys(apiKeysMap);
+
+    if (connectedPlatforms.length === 0) {
+      container.innerHTML = '<p class="text-sm text-slate-600">您还没有连接任何平台。请返回上一步配置 API 密钥。</p>';
+      return;
+    }
+
+    container.innerHTML = connectedPlatforms.map(platform => `
+      <label class="flex items-center gap-3">
+        <input type="checkbox" value="${platform}" checked
+               class="w-4 h-4 rounded border-slate-300 preferred-platform" />
+        <span class="text-sm">${platform}</span>
+      </label>
+    `).join('');
+  }
+
+  function goStep(step) {
+    if (step === 2) {
+      // Validate step 1
+      const name = document.getElementById('brand-name').value.trim();
+      const url = document.getElementById('brand-url').value.trim();
+
+      if (!name) {
+        document.getElementById('brand-name-error').textContent = '品牌名不能为空';
+        document.getElementById('brand-name-error').classList.remove('hidden');
+        return;
+      }
+      if (!url) {
+        document.getElementById('brand-url-error').textContent = 'URL 不能为空';
+        document.getElementById('brand-url-error').classList.remove('hidden');
+        return;
+      }
+
+      // Save brand info
+      saveBrandInfo(name, url);
+    }
+
+    if (step === 3) {
+      // Need at least one API key
+      if (Object.keys(apiKeysMap).length === 0) {
+        const msg = document.getElementById('status-message');
+        msg.textContent = '请至少配置一个 API 渠道';
+        msg.className = 'bg-red-100 text-red-700 px-4 py-3 rounded-lg text-sm';
+        msg.classList.remove('hidden');
+        return;
+      }
+    }
+
+    // Clear any error messages when transitioning steps
+    document.getElementById('status-message').classList.add('hidden');
+
+    currentStep = step;
+    renderStep(step);
+  }
+
+  async function saveBrandInfo(name, url) {
+    try {
+      const res = await fetch('/api/v2/brand-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, target_urls_json: [], exposure_blocklist_json: [] }),
+      });
+
+      if (!res.ok) throw new Error('Failed to save brand profile');
+    } catch (err) {
+      console.error('Error saving brand info:', err);
+    }
+  }
+
+  async function completeOnboarding() {
+    try {
+      // Save API keys
+      for (const [platform, key] of Object.entries(apiKeysMap)) {
+        const platformId = platform.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const res = await fetch(`/api/platforms/${platformId}/api-key`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: key }),
+        });
+        if (!res.ok) console.warn(`Failed to save API key for ${platform}`);
+      }
+
+      // Mark onboarding as complete
+      const res = await fetch('/api/onboarding/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (res.ok) {
+        // Redirect to admin page
+        window.location.href = '/admin.html';
+      }
+    } catch (err) {
+      console.error('Error completing onboarding:', err);
+      alert('完成入门指南时出错');
+    }
+  }
+
+  function loadSavedProgress() {
+    // Load from localStorage if available
+    const saved = localStorage.getItem('onboarding-progress');
+    if (saved) {
+      const data = JSON.parse(saved);
+      if (data.brandName) document.getElementById('brand-name').value = data.brandName;
+      if (data.brandUrl) document.getElementById('brand-url').value = data.brandUrl;
+    }
+  }
+
+  // Auto-save progress
+  window.addEventListener('beforeunload', () => {
+    const progress = {
+      brandName: document.getElementById('brand-name').value,
+      brandUrl: document.getElementById('brand-url').value,
+    };
+    localStorage.setItem('onboarding-progress', JSON.stringify(progress));
+  });
+</script>
+
+</body>
+</html>

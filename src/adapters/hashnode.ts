@@ -1,4 +1,4 @@
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
 export class HashnodeAdapter extends BaseAdapter {
   name = 'Hashnode';
@@ -45,6 +45,26 @@ export class HashnodeAdapter extends BaseAdapter {
       return this.ok(data.data.publishPost.post.url);
     } catch (error: any) {
       return this.fail(error);
+    }
+  }
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const token = process.env.HASHNODE_TOKEN;
+    if (!token) return { ok: false, error: 'API key not configured' };
+
+    try {
+      const query = 'query { me { id name } }';
+      const response = await fetch('https://gql.hashnode.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token },
+        body: JSON.stringify({ query }),
+      });
+
+      const data = await response.json();
+      if (data.errors) return { ok: false, error: data.errors[0].message };
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
     }
   }
 }

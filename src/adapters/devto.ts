@@ -1,4 +1,4 @@
-import { BaseAdapter, PublishResult, PublishOptions } from './base';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
 export class DevToAdapter extends BaseAdapter {
   name = 'Dev.to';
@@ -28,6 +28,24 @@ export class DevToAdapter extends BaseAdapter {
       throw new Error(data.error || 'Failed to publish to Dev.to');
     } catch (error: any) {
       return this.fail(error);
+    }
+  }
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const apiKey = process.env.DEVTO_API_KEY;
+    if (!apiKey) return { ok: false, error: 'API key not configured' };
+
+    try {
+      const response = await fetch('https://dev.to/api/user', {
+        headers: { 'api-key': apiKey },
+      });
+
+      if (!response.ok) {
+        return { ok: false, error: `${response.status} ${response.statusText}` };
+      }
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
     }
   }
 }

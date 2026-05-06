@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.2.1 — 2026-05-05 (渠道綁定串接 + 主入口設置可交互)
+
+### Added — 主入口「系統設置」可交互（plan 003）
+- `index.html` 的 settings view 從只讀 grid 改為 4-section 折疊面板：
+  - **LLM 與基礎**：Gemini/OpenAI key 即時驗證 + 模型動態下拉
+  - **分發平台 (7)**：inline key 配置 + 單測試 + 全部測試 + 連接狀態徽章（含 last_test_error / test_timestamp）
+  - **瀏覽器自動化**：開關 + 3 種模式（chromium / chrome-isolated / chrome-profile）+ ZIP 批量導入 + 逐個登入/測試
+  - **Google Sheets**：Sheet ID + Service Account JSON 配置
+- 側欄 footer 新增「⚙ 高級管理 ↗」深鏈到 `/admin.html`，保留進階管理頁面
+- 任一保存動作自動刷新「品牌資料就緒」徽章（plan R5）
+- 切換離開 settings view 時清除殘留 toast，避免返回看到過期訊息
+
+### Added — 流程化多渠道綁定向導（plan 002 後續）
+- `feat(adapters)`: testConnection() 統一接口（7 個 API + 浏览器平台）
+- `feat(auth)`: `POST /api/auth/import-sessions` ZIP 批量會話導入
+- `feat(admin)`: `PATCH /api/platforms/:id/api-key` 加密入庫 + 即時驗證
+- `feat(onboarding)`: 新用戶 4 步引導（品牌 → API → 瀏覽器 → 首選）
+- `feat`: 24h 後台 credential validator
+- `feat`: 渠道診斷 + 失敗批次列表 + 一鍵修復入口
+
+### Fixed
+- `publish-worker` 在冪等跳過和 MVP_PLATFORMS 跳過路徑沒有調用 `markSucceededWithUrl/markSkipped`
+  → 任務卡在 `running`，現補上終態標記
+- `syncSideEffects` 補上 `posts.platform` / `posts.published_url` 兩列，配合 `idx_posts_batch_variant_platform` 唯一索引正確 ON CONFLICT
+- `handleReconciliation` 之前把 `p.original_url` 當 published_url
+  → Sheets 收到品牌目標 URL 而非實際發布 URL，現改 select `published_url` 並按 (batch_id, platform) join
+
+### Changed — 代碼質量
+- `TestConnectionResult` 移到 `src/types/index.ts` 集中聲明
+- `BaseAdapter.testConnection()` 從 abstract 改為可選；所有調用點用 `adapter.testConnection?.()`
+- 全項目 sqlite `db.prepare(...).get()` 加 `as { ... } | undefined` 類型斷言
+- `unzipper` 從 ESM import 改為 `require()` cast，消除 CJS interop 構建錯誤
+- 10 項性能優化（詳見 `OPTIMIZATION_SUMMARY.md`）
+
+### Docs
+- `CHANNEL_SETUP_GUIDE.md` — 完整渠道配置與診斷指南
+- `OPTIMIZATION_SUMMARY.md` — 10 項優化說明 + 基準腳本
+- `docs/plans/2026-05-05-002-feat-streamlined-distribution-channel-binding-plan.md`
+- `docs/plans/2026-05-05-003-fix-settings-config-ui-clickable-plan.md`
+
+### Tests
+- 280/280 vitest 通過（新增 `auth.test.ts`, `admin-platforms.test.ts`, `credential-validator.test.ts` 等覆蓋）
+
+---
+
 ## v0.2.0 — 2026-05-05 (第三方口吻外鏈分發工具)
 
 ### 全新功能
