@@ -41,6 +41,42 @@ const MIN_DRAFT_CHARS = 600; // Plan Unit 5: 600 non-whitespace chars
 // -----------------------------------------------------------------------
 
 /**
+ * Generate a single variant for one platform.
+ * Used by the regenerate-variant endpoint so we only pay for 1 LLM call
+ * instead of re-running all 7 platforms.
+ * Returns generation_status='failed' (instead of throwing) on LLM errors.
+ */
+export async function generateSingleVariant(
+  platform: string,
+  input: GenerateVariantsInput,
+  batchId: string,
+  db: Database.Database,
+): Promise<Variant> {
+  const persona_group = platformToPersona(platform);
+  const variantId = `${batchId}_${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+  const targetUrl = resolveTargetUrl(input);
+
+  if (!persona_group) {
+    return {
+      variant_id: variantId, platform, persona_group: 'tech_blogger',
+      title: '', body_markdown: '', anchor_words: [], target_url: targetUrl,
+      generation_status: 'failed', error: `Unknown platform: ${platform}`,
+    };
+  }
+
+  try {
+    return await generateOne({ platform, persona_group }, input, targetUrl, batchId, db);
+  } catch (e: any) {
+    logger.warn(`[VariantGen] regenerate ${platform} failed: ${e.message}`);
+    return {
+      variant_id: variantId, platform, persona_group,
+      title: '', body_markdown: '', anchor_words: [], target_url: targetUrl,
+      generation_status: 'failed', error: e.message,
+    };
+  }
+}
+
+/**
  * Generate 7 variants, one per MVP platform, in MVP_PLATFORMS order.
  * Returns partial results: failed variants carry generation_status='failed'.
  */

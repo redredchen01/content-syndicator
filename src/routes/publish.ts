@@ -282,7 +282,7 @@ router.post('/api/bulk-publish', upload.single('file'), (req, res) => {
 // v0.2 API: generate variants + dispatch publish_jobs
 // ---------------------------------------------------------------------------
 
-import { generateVariants } from '../services/variant-generator';
+import { generateVariants, generateSingleVariant } from '../services/variant-generator';
 import { attachAnchors } from '../services/anchor-generator';
 import { runLint } from '../services/lint';
 import { getProfile } from '../services/brand-profile';
@@ -333,8 +333,15 @@ router.get('/api/v2/queue', syncRoute((req, res) => {
 }));
 
 // POST /api/v2/regenerate-variant — single-tab regeneration
+//
+// Accepts `siblings` (the other variants already on screen) so the endpoint
+// can merge them with the newly generated variant and re-run the full lint
+// pipeline (including pairwise Jaccard).  Without siblings the frontend
+// only clears the per-platform violation and silently skips Jaccard — a
+// user could regenerate to escape a similarity violation without it being
+// re-checked against the rest of the batch.
 router.post('/api/v2/regenerate-variant', asyncRoute(async (req, res) => {
-  const { batchId, platform, draft } = req.body;
+  const { batchId, platform, draft, siblings = [] } = req.body;
   if (!batchId || !platform || !draft) {
     return res.status(400).json({ error: 'batchId, platform, and draft are required' });
   }
@@ -342,15 +349,21 @@ router.post('/api/v2/regenerate-variant', asyncRoute(async (req, res) => {
   const brand = getProfile(db);
   if (!brand) return res.status(400).json({ error: 'Brand profile not configured' });
 
-  // Generate variants for all platforms, find the one we need
-  const { variants } = await generateVariants({ draft, brand }, db);
+  // Generate only the requested platform (1 LLM call instead of 7).
+  const newVariant = await generateSingleVariant(platform, { draft, brand }, batchId, db);
+
+  // Attach anchors for just this variant.
   const recentTopAnchors = anchorHistory.topInRecentBatches(db, 30, 10).map(r => r.anchor);
-  const withAnchors = await attachAnchors(variants, brand, recentTopAnchors, db);
-  const target = withAnchors.find(v => v.platform === platform);
+  const [withAnchor] = await attachAnchors([newVariant], brand, recentTopAnchors, db);
 
-  if (!target) {
-    return res.status(404).json({ error: `Platform ${platform} not found in generated variants` });
-  }
+  // Merge with siblings (exclude any stale entry for this platform).
+  const otherVariants = (siblings as import('../types').Variant[]).filter(
+    v => v.platform !== platform,
+  );
+  const allVariants = [...otherVariants, withAnchor];
 
-  res.json({ variant: { ...target, variant_id: `${batchId}_${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}` } });
+  // Re-run full lint so Jaccard is checked against the whole batch.
+  const lintResult = runLint(allVariants, brand);
+
+  res.json({ variant: withAnchor, lintResult });
 }));

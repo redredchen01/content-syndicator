@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   generateVariants,
+  generateSingleVariant,
   parseMarkdownResponse,
   DRAFT_TOO_SHORT,
   type GenerateVariantsInput,
@@ -218,6 +219,75 @@ describe('generateVariants', () => {
       .all(batchId) as unknown[];
 
     expect(rows.length).toBe(7); // one per platform
+    db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateSingleVariant
+// ---------------------------------------------------------------------------
+
+describe('generateSingleVariant', () => {
+  it('makes exactly 1 LLM call for a known platform', async () => {
+    const db = makeDb();
+    vi.mocked(invokeLLMWithTools).mockResolvedValue(makeMockLLMResponse('Dev.to'));
+
+    await generateSingleVariant('Dev.to', { draft: LONG_DRAFT, brand: MOCK_BRAND }, 'batch_test', db);
+
+    expect(vi.mocked(invokeLLMWithTools)).toHaveBeenCalledTimes(1);
+    db.close();
+  });
+
+  it('returns generation_status=ok and correct platform', async () => {
+    const db = makeDb();
+    vi.mocked(invokeLLMWithTools).mockResolvedValue(makeMockLLMResponse('Hashnode'));
+
+    const variant = await generateSingleVariant(
+      'Hashnode', { draft: LONG_DRAFT, brand: MOCK_BRAND }, 'batch_regen', db,
+    );
+
+    expect(variant.platform).toBe('Hashnode');
+    expect(variant.generation_status).toBe('ok');
+    expect(variant.variant_id).toBe('batch_regen_hashnode');
+    db.close();
+  });
+
+  it('returns generation_status=failed (no throw) when LLM errors', async () => {
+    const db = makeDb();
+    vi.mocked(invokeLLMWithTools).mockRejectedValue(new Error('API timeout'));
+
+    const variant = await generateSingleVariant(
+      'Medium', { draft: LONG_DRAFT, brand: MOCK_BRAND }, 'batch_err', db,
+    );
+
+    expect(variant.generation_status).toBe('failed');
+    expect(variant.error).toContain('API timeout');
+    db.close();
+  });
+
+  it('returns generation_status=failed for unknown platform (no LLM call)', async () => {
+    const db = makeDb();
+
+    const variant = await generateSingleVariant(
+      'UnknownPlatform', { draft: LONG_DRAFT, brand: MOCK_BRAND }, 'batch_unk', db,
+    );
+
+    expect(variant.generation_status).toBe('failed');
+    expect(variant.error).toContain('Unknown platform');
+    expect(vi.mocked(invokeLLMWithTools)).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it('records exactly 1 llm_calls row', async () => {
+    const db = makeDb();
+    vi.mocked(invokeLLMWithTools).mockResolvedValue(makeMockLLMResponse('GitHub'));
+
+    await generateSingleVariant('GitHub', { draft: LONG_DRAFT, brand: MOCK_BRAND }, 'batch_llmrow', db);
+
+    const rows = db
+      .prepare("SELECT * FROM llm_calls WHERE batch_id = 'batch_llmrow'")
+      .all() as unknown[];
+    expect(rows).toHaveLength(1);
     db.close();
   });
 });

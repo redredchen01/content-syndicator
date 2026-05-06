@@ -773,19 +773,19 @@ function syndicatorApp() {
       if (!platform) return;
       this.regenLoading = idx;
       try {
+        // Send the current siblings so the backend can run full Jaccard lint
+        // against the whole batch (not just clear this platform's violation).
+        const siblings = this.variants.filter(v => v.platform !== platform);
         const res = await fetch('/api/v2/regenerate-variant', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ batchId: this.batchId, platform, draft: this.draft }),
+          body: JSON.stringify({ batchId: this.batchId, platform, draft: this.draft, siblings }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         this.variants[idx] = data.variant;
-        // Re-run lint with updated variants
-        // (simplified: just clear batch violation hint)
-        if (this.lintResult?.variantViolations) {
-          delete this.lintResult.variantViolations[platform];
-        }
+        // Apply the full lint result from the backend (includes fresh Jaccard).
+        if (data.lintResult) this.lintResult = data.lintResult;
       } catch (e) {
         alert(`重新生成失敗: ${e.message}`);
       } finally {
