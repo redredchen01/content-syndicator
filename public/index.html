@@ -394,9 +394,9 @@
               <p x-show="modelList.length === 0" class="text-xs text-gray-500 mt-1">尚無可用模型 — 請先保存有效的 Gemini 或 OpenAI key</p>
             </div>
             <div class="flex items-center justify-between pt-2">
-              <span class="text-xs" x-show="llmSaveMsg"
-                    :class="llmSaveMsg.startsWith('✓') ? 'text-green-600' : 'text-red-600'"
-                    x-text="llmSaveMsg"></span>
+              <span class="text-xs" x-show="sectionMsgs.llm.text"
+                    :class="sectionMsgs.llm.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                    x-text="sectionMsgs.llm.text"></span>
               <button @click="saveLlmSettings()" :disabled="llmSaving"
                       :class="llmSaving ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
                       class="text-sm text-white px-4 py-1.5 rounded-md ml-auto">
@@ -457,9 +457,9 @@
                     保存
                   </button>
                 </div>
-                <p x-show="platformFormOpen === p.id && platformKeyStatus.text" class="text-xs mt-1"
-                   :class="platformKeyStatus.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
-                   x-text="platformKeyStatus.text"></p>
+                <p x-show="platformFormOpen === p.id && sectionMsgs.platformKey.text" class="text-xs mt-1"
+                   :class="sectionMsgs.platformKey.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                   x-text="sectionMsgs.platformKey.text"></p>
               </div>
             </template>
             <p x-show="apiPlatforms.length === 0" class="text-sm text-gray-400 text-center py-4">加載中…</p>
@@ -554,9 +554,9 @@
             </div>
 
             <div class="flex items-center justify-between pt-2">
-              <span class="text-xs" x-show="browserSaveMsg"
-                    :class="browserSaveMsg.startsWith('✓') ? 'text-green-600' : 'text-red-600'"
-                    x-text="browserSaveMsg"></span>
+              <span class="text-xs" x-show="sectionMsgs.browser.text"
+                    :class="sectionMsgs.browser.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                    x-text="sectionMsgs.browser.text"></span>
               <button @click="saveBrowserSettings()" :disabled="browserSaving"
                       :class="browserSaving ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
                       class="text-sm text-white px-4 py-1.5 rounded-md ml-auto">
@@ -592,9 +592,9 @@
               中配置。
             </p>
             <div class="flex items-center justify-between pt-2">
-              <span class="text-xs" x-show="infraSaveMsg"
-                    :class="infraSaveMsg.startsWith('✓') ? 'text-green-600' : 'text-red-600'"
-                    x-text="infraSaveMsg"></span>
+              <span class="text-xs" x-show="sectionMsgs.infra.text"
+                    :class="sectionMsgs.infra.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                    x-text="sectionMsgs.infra.text"></span>
               <button @click="saveInfraSettings()" :disabled="infraSaving"
                       :class="infraSaving ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
                       class="text-sm text-white px-4 py-1.5 rounded-md ml-auto">
@@ -682,10 +682,11 @@ function syndicatorApp() {
     settingsToast: { text: '', kind: 'ok' },
     sectionOpen: { llm: false, platforms: false, browser: false, infra: false },
     isSavingAny: false,
+    // Section messages — unified { text, kind } state for all 4 sections
+    sectionMsgs: { llm: { text: '', kind: 'ok' }, browser: { text: '', kind: 'ok' }, infra: { text: '', kind: 'ok' }, platformKey: { text: '', kind: 'ok' } },
     // LLM section
     llmForm: { GEMINI_API_KEY: '', OPENAI_API_KEY: '', SELECTED_MODEL: '' },
     llmSaving: false,
-    llmSaveMsg: '',
     modelList: [],
     // Platforms section
     platformsCache: null,
@@ -694,7 +695,6 @@ function syndicatorApp() {
     defaultPlatforms: [],
     platformFormOpen: null,
     platformKeyInput: '',
-    platformKeyStatus: { text: '', kind: 'ok' },
     platformTesting: {},
     platformSaving: false,
     batchValidating: false,
@@ -706,14 +706,12 @@ function syndicatorApp() {
       BROWSER_AUTH_CHROME_PROFILE: '',
     },
     browserSaving: false,
-    browserSaveMsg: '',
     zipFile: null,
     zipImporting: false,
     zipImportResult: null,
     // Infra section
     infraForm: { GOOGLE_SHEET_ID: '', GOOGLE_APPLICATION_CREDENTIALS_JSON: '' },
     infraSaving: false,
-    infraSaveMsg: '',
 
     get apiPlatforms() {
       return (this.platformsCache?.platforms || []).filter(p => !p.browserAutomation);
@@ -731,10 +729,7 @@ function syndicatorApp() {
     switchView(id) {
       // Clear stale settings save messages so users don't see old toasts on return
       if (this.view === 'settings' && id !== 'settings') {
-        this.llmSaveMsg = '';
-        this.browserSaveMsg = '';
-        this.infraSaveMsg = '';
-        this.platformKeyStatus = { text: '', kind: 'ok' };
+        Object.keys(this.sectionMsgs).forEach(k => { this.sectionMsgs[k] = { text: '', kind: 'ok' }; });
       }
       this.view = id;
       if (id === 'queue')   { this.loadQueue(); this.startQueuePolling(); } else { this.stopQueuePolling(); }
@@ -843,7 +838,7 @@ function syndicatorApp() {
         const res = await fetch('/api/v2/queue');
         const data = await res.json();
         this.queueJobs = data.jobs;
-      } catch (e) {}
+      } catch (e) { console.warn('[loadQueue]', e); }
     },
     startQueuePolling() {
       this.stopQueuePolling();
@@ -860,7 +855,7 @@ function syndicatorApp() {
         const data = await res.json();
         this.brandReady = data.dispatchReady;
         this.brandProfile = data.profile;
-      } catch (e) {}
+      } catch (e) { console.warn('[loadBrandProfile]', e); }
     },
     loadBrandForm() {
       const p = this.brandProfile;
@@ -905,7 +900,7 @@ function syndicatorApp() {
       try {
         const res = await fetch('/api/history');
         this.historyItems = await res.json();
-      } catch (e) {}
+      } catch (e) { console.warn('[loadHistory]', e); }
     },
 
     // ── Settings: shared loaders ───────────────────────
@@ -959,6 +954,11 @@ function syndicatorApp() {
       setTimeout(() => { if (this.settingsToast.text === text) this.settingsToast = { text: '', kind }; }, 3500);
     },
 
+    // Set a section-level inline message (replaces separate llmSaveMsg/browserSaveMsg/etc. vars).
+    setMsg(section, text, kind = 'ok') {
+      this.sectionMsgs[section] = { text, kind };
+    },
+
     // Universal fetch wrapper with AbortController timeout + auto JSON encode/decode.
     // Throws Error with .message ready for UI display. Handles FormData (no auto-encode).
     async fetchJson(url, opts = {}, timeoutMs = 20000) {
@@ -985,21 +985,21 @@ function syndicatorApp() {
 
     // Section save helper: global concurrency guard + section flag + uniform error handling.
     // Returns true on success, false on failure. Caller handles post-success cleanup (clearing inputs).
-    async saveSection({ flagKey, msgKey, payload, url = '/api/settings', method = 'POST', refresh = [], successMsg = '✓ 已保存' }) {
+    async saveSection({ flagKey, msgSection, payload, url = '/api/settings', method = 'POST', refresh = [], successMsg = '✓ 已保存' }) {
       if (this.isSavingAny) {
-        this[msgKey] = '✗ 另一個保存進行中，請稍候再試';
+        this.setMsg(msgSection, '✗ 另一個保存進行中，請稍候再試', 'err');
         return false;
       }
       this.isSavingAny = true;
       this[flagKey] = true;
-      this[msgKey] = '';
+      this.setMsg(msgSection, '');
       try {
         await this.fetchJson(url, { method, body: payload }, 30000);
         for (const fn of refresh) await fn.call(this);
-        this[msgKey] = typeof successMsg === 'function' ? successMsg.call(this) : successMsg;
+        this.setMsg(msgSection, typeof successMsg === 'function' ? successMsg.call(this) : successMsg, 'ok');
         return true;
       } catch (e) {
-        this[msgKey] = `✗ ${e.message}`;
+        this.setMsg(msgSection, `✗ ${e.message}`, 'err');
         return false;
       } finally {
         this[flagKey] = false;
@@ -1015,7 +1015,7 @@ function syndicatorApp() {
       if (this.llmForm.SELECTED_MODEL) payload.SELECTED_MODEL = this.llmForm.SELECTED_MODEL;
       const ok = await this.saveSection({
         flagKey: 'llmSaving',
-        msgKey: 'llmSaveMsg',
+        msgSection: 'llm',
         payload,
         refresh: [this.loadSettings, this.loadModels, this.loadBrandProfile],
         successMsg() { return `✓ 已保存（${this.modelList.length} 個模型可用）`; },
@@ -1027,7 +1027,7 @@ function syndicatorApp() {
     togglePlatformForm(id) {
       this.platformFormOpen = this.platformFormOpen === id ? null : id;
       this.platformKeyInput = '';
-      this.platformKeyStatus = { text: '', kind: 'ok' };
+      this.setMsg('platformKey', '');
     },
 
     async testPlatform(id) {
@@ -1047,21 +1047,21 @@ function syndicatorApp() {
       const apiKey = this.platformKeyInput.trim();
       if (!apiKey) return;
       if (this.isSavingAny) {
-        this.platformKeyStatus = { text: '✗ 另一個保存進行中，請稍候再試', kind: 'err' };
+        this.setMsg('platformKey', '✗ 另一個保存進行中，請稍候再試', 'err');
         return;
       }
       this.isSavingAny = true;
       this.platformSaving = true;
-      this.platformKeyStatus = { text: '保存並驗證中…', kind: 'ok' };
+      this.setMsg('platformKey', '保存並驗證中…', 'ok');
       try {
         await this.fetchJson(`/api/platforms/${id}/api-key`, { method: 'PATCH', body: { apiKey } }, 30000);
-        this.platformKeyStatus = { text: '✓ 密鑰已驗證並保存', kind: 'ok' };
+        this.setMsg('platformKey', '✓ 密鑰已驗證並保存', 'ok');
         this.platformKeyInput = '';
         setTimeout(() => { this.platformFormOpen = null; }, 800);
         await this.loadPlatforms(true);
         await this.loadBrandProfile();
       } catch (e) {
-        this.platformKeyStatus = { text: `✗ ${e.message}`, kind: 'err' };
+        this.setMsg('platformKey', `✗ ${e.message}`, 'err');
       } finally {
         this.platformSaving = false;
         this.isSavingAny = false;
@@ -1085,7 +1085,7 @@ function syndicatorApp() {
     async saveBrowserSettings() {
       await this.saveSection({
         flagKey: 'browserSaving',
-        msgKey: 'browserSaveMsg',
+        msgSection: 'browser',
         payload: {
           ENABLE_BROWSER_AUTOMATION: this.browserForm.ENABLE_BROWSER_AUTOMATION,
           BROWSER_AUTH_MODE: this.browserForm.BROWSER_AUTH_MODE,
@@ -1142,7 +1142,7 @@ function syndicatorApp() {
       }
       const ok = await this.saveSection({
         flagKey: 'infraSaving',
-        msgKey: 'infraSaveMsg',
+        msgSection: 'infra',
         payload,
         refresh: [this.loadSettings, this.loadBrandProfile],
       });
