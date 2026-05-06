@@ -124,11 +124,21 @@
       <!-- Lint banner -->
       <div x-show="lintResult && (lintResult.batchViolation || Object.keys(lintResult.variantViolations || {}).length > 0)"
            class="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 space-y-1">
-        <div class="font-semibold text-amber-800 text-sm">⚠ Lint 警告</div>
+        <div class="font-semibold text-amber-800 text-sm">⚠ Lint 警告（發佈已阻止）</div>
         <div x-show="lintResult?.batchViolation" class="text-xs text-amber-700"
              x-text="lintResult?.batchViolation ? `批次相似度過高: ${lintResult.batchViolation.platforms[0]} ↔ ${lintResult.batchViolation.platforms[1]} (Jaccard ${(lintResult.batchViolation.similarity * 100).toFixed(0)}%)` : ''"></div>
         <template x-for="[platform, match] in Object.entries(lintResult?.variantViolations || {})" :key="platform">
           <div class="text-xs text-amber-700" x-text="`${platform}: 身份暴露詞「${match.matched}」`"></div>
+        </template>
+      </div>
+
+      <!-- Naked-URL anchor banner (anchor generation exhausted all retries) -->
+      <div x-show="hasNakedUrlVariants"
+           class="bg-orange-50 border border-orange-200 rounded-xl px-5 py-3 space-y-1">
+        <div class="font-semibold text-orange-800 text-sm">⚓ 錨詞生成失敗（發佈已阻止）</div>
+        <template x-for="v in variants.filter(v => v.generation_status === 'ok' && !skippedPlatforms.has(v.platform) && v.anchor_words?.includes('__naked_url__'))" :key="v.platform">
+          <div class="text-xs text-orange-700"
+               x-text="`${v.platform}: 錨詞 LLM 重試已耗盡，請點「重新生成本 tab」`"></div>
         </template>
       </div>
 
@@ -152,6 +162,7 @@
               <span x-text="v.platform"></span>
               <span x-show="v.generation_status === 'failed'" class="text-red-500">✗</span>
               <span x-show="lintResult?.variantViolations?.[v.platform]" class="text-amber-500">!</span>
+              <span x-show="v.anchor_words?.includes('__naked_url__')" class="text-orange-500" title="錨詞生成失敗">⚓</span>
             </button>
           </template>
         </div>
@@ -657,10 +668,25 @@ function syndicatorApp() {
       return !!this.lintResult?.batchViolation;
     },
     get lintHasVariantViolations() {
-      return Object.keys(this.lintResult?.variantViolations || {}).length > 0;
+      // Only count violations for active (non-skipped, status=ok) variants
+      const violations = this.lintResult?.variantViolations || {};
+      return Object.keys(violations).some(
+        p => !this.skippedPlatforms.has(p) &&
+             this.variants.some(v => v.platform === p && v.generation_status === 'ok')
+      );
+    },
+    get hasNakedUrlVariants() {
+      // True when any active variant's anchor generation fell back to bare URL
+      return this.variants.some(v =>
+        v.generation_status === 'ok' &&
+        !this.skippedPlatforms.has(v.platform) &&
+        v.anchor_words?.includes('__naked_url__')
+      );
     },
     get canDispatch() {
       if (this.lintHasBatchViolation) return false;
+      if (this.lintHasVariantViolations) return false;  // per-variant exposure violations also block
+      if (this.hasNakedUrlVariants) return false;       // naked-URL anchor fallback blocks too
       return this.variants.some(v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform));
     },
     get activeVariantCount() {
@@ -812,6 +838,14 @@ function syndicatorApp() {
         const activeVariants = this.variants.filter(
           v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform)
         );
+        // Frontend guard (canDispatch already blocks the button; this catches race conditions)
+        const nakedPlatforms = activeVariants
+          .filter(v => v.anchor_words?.includes('__naked_url__'))
+          .map(v => v.platform);
+        if (nakedPlatforms.length > 0) {
+          alert(`無法發佈：${nakedPlatforms.join('、')} 的錨詞生成失敗，請重新生成後再發佈`);
+          return;
+        }
         const res = await fetch('/api/v2/dispatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

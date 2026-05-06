@@ -315,6 +315,25 @@ router.post('/api/v2/dispatch', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'batchId and variants[] are required' });
   }
 
+  // Server-side guard — the frontend should already block these, but defence-in-depth
+  // prevents a bypassed UI from enqueuing unusable jobs.
+  type DispatchVariant = { platform: string; anchor_words?: string[]; body_markdown?: string };
+  const MIN_BODY_CHARS = 100;
+  const invalid = (variants as DispatchVariant[]).filter(v => {
+    if (v.anchor_words?.includes('__naked_url__')) return true; // anchor generation failed completely
+    if (!v.body_markdown || v.body_markdown.trim().length < MIN_BODY_CHARS) return true;
+    return false;
+  });
+  if (invalid.length > 0) {
+    return res.status(422).json({
+      error: 'Some variants are not ready to dispatch',
+      invalid: invalid.map(v => ({
+        platform: v.platform,
+        reason: v.anchor_words?.includes('__naked_url__') ? 'naked_url_fallback' : 'body_too_short',
+      })),
+    });
+  }
+
   dispatchVariantJobs(variants, batchId, db);
 
   const jobs = publishJobs.byBatch(db, batchId);
