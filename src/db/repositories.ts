@@ -113,6 +113,39 @@ export interface AnchorHistoryRow {
   target_url: string;
 }
 
+export interface OAuthToken {
+  platform: string;
+  access_token: string | null;
+  refresh_token: string;
+  expires_at: number | null;
+  updated_at: string;
+}
+
+export const oauthTokens = {
+  get(db: Database.Database, platform: string): OAuthToken | null {
+    const row = db
+      .prepare('SELECT * FROM oauth_tokens WHERE platform = ?')
+      .get(platform) as OAuthToken | undefined;
+    return row ?? null;
+  },
+
+  upsert(
+    db: Database.Database,
+    platform: string,
+    data: { access_token: string | null; refresh_token: string; expires_at: number | null },
+  ): void {
+    db.prepare(`
+      INSERT INTO oauth_tokens (platform, access_token, refresh_token, expires_at, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(platform) DO UPDATE SET
+        access_token  = excluded.access_token,
+        refresh_token = excluded.refresh_token,
+        expires_at    = excluded.expires_at,
+        updated_at    = CURRENT_TIMESTAMP
+    `).run(platform, data.access_token, data.refresh_token, data.expires_at);
+  },
+};
+
 export type DraftBatchStatus = 'drafting' | 'dispatched' | 'archived';
 
 export interface DraftBatch {

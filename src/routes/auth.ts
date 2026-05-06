@@ -1,8 +1,21 @@
 import express, { Router, Request, Response } from 'express';
 import multer from 'multer';
+import { google } from 'googleapis';
 import { importSessions } from '../services/browser-session';
 import { allAdapters } from '../adapters';
 import { logger } from '../utils/logger';
+import { db, oauthTokens } from '../db';
+
+const GOOGLE_SCOPES = ['https://www.googleapis.com/auth/blogger'];
+
+function buildOAuth2Client() {
+  const base = process.env.APP_BASE_URL?.replace(/\/+$/, '') ?? `http://localhost:${process.env.PORT || 3000}`;
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_OAUTH_CLIENT_ID,
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    `${base}/api/auth/google/callback`,
+  );
+}
 
 export const router = Router();
 
@@ -82,4 +95,64 @@ router.post('/api/auth/test-connection/:platformId', async (req: Request, res: R
       error: error?.message ?? 'Failed to test connection',
     });
   }
+});
+
+// GET /api/auth/google/start — redirect user to Google consent page
+router.get('/api/auth/google/start', (_req: Request, res: Response) => {
+  if (!process.env.GOOGLE_OAUTH_CLIENT_ID || !process.env.GOOGLE_OAUTH_CLIENT_SECRET) {
+    return res.status(500).json({ error: 'GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured' });
+  }
+  const oauth2Client = buildOAuth2Client();
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: GOOGLE_SCOPES,
+  });
+  logger.info('[Auth] Redirecting to Google OAuth consent page');
+  res.redirect(url);
+});
+
+// GET /api/auth/google/callback — exchange code, persist tokens
+router.get('/api/auth/google/callback', async (req: Request, res: Response) => {
+  const { code, error: oauthError } = req.query as Record<string, string>;
+
+  if (oauthError) {
+    logger.warn(`[Auth] Google OAuth denied: ${oauthError}`);
+    return res.status(400).send(`<h2>Authorization denied</h2><p>${oauthError}</p>`);
+  }
+  if (!code) {
+    return res.status(400).send('<h2>Missing authorization code</h2>');
+  }
+
+  try {
+    const oauth2Client = buildOAuth2Client();
+    const { tokens } = await oauth2Client.getToken(code);
+
+    if (!tokens.refresh_token) {
+      return res.status(400).send(
+        '<h2>No refresh token received.</h2><p>Revoke app access in your Google Account and try again to force a new consent.</p>'
+      );
+    }
+
+    oauthTokens.upsert(db, 'blogger', {
+      access_token: tokens.access_token ?? null,
+      refresh_token: tokens.refresh_token,
+      expires_at: tokens.expiry_date ?? null,
+    });
+
+    logger.info('[Auth] Google OAuth tokens saved for Blogger');
+    res.send('<h2>Blogger authorized successfully.</h2><p>You can close this tab and return to the app.</p>');
+  } catch (err: any) {
+    logger.error('[Auth] Google OAuth callback failed', err);
+    res.status(500).send(`<h2>Authorization failed</h2><p>${err.message}</p>`);
+  }
+});
+
+// GET /api/auth/google/status — check if Blogger OAuth token is stored
+router.get('/api/auth/google/status', (_req: Request, res: Response) => {
+  const token = oauthTokens.get(db, 'blogger');
+  res.json({
+    connected: !!token,
+    expires_at: token?.expires_at ?? null,
+  });
 });

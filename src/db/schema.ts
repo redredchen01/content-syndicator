@@ -224,4 +224,17 @@ export function applyV2Schema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_anchor_history_batch_used
       ON anchor_history(batch_id, used_at DESC)
   `);
+
+  // oauth_tokens — one row per platform. Stores user-level OAuth2 credentials
+  // obtained via the /api/auth/google/callback flow. Takes precedence over
+  // service-account JSON for adapters that support it (e.g. Blogger).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      platform    TEXT PRIMARY KEY,
+      access_token  TEXT,
+      refresh_token TEXT NOT NULL,
+      expires_at    INTEGER,
+      updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 }
