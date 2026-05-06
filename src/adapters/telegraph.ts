@@ -1,10 +1,20 @@
-import { PlatformAdapter, PublishResult, PublishOptions } from './base';
-import { logger } from '../utils/logger';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
-export class TelegraphAdapter implements PlatformAdapter {
+export class TelegraphAdapter extends BaseAdapter {
   name = 'Telegra.ph';
   canPublishAutomatically = true;
   private accessToken?: string;
+
+  async testConnection(): Promise<TestConnectionResult> {
+    try {
+      const response = await fetch('https://api.telegra.ph/getPageList?access_token=test&limit=1');
+      const data = await response.json();
+      if (response.ok || data.ok === false) return { ok: true };
+      return { ok: false, error: 'Failed to connect to Telegraph API' };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
+    }
+  }
 
   private safeTitle(title: string) {
     const cleaned = title.replace(/\s+/g, ' ').trim();
@@ -120,22 +130,10 @@ export class TelegraphAdapter implements PlatformAdapter {
       });
       const data = await this.parseTelegraphResponse(response);
 
-      if (data.ok) {
-        return {
-          platform: this.name,
-          success: true,
-          publishedUrl: data.result.url
-        };
-      }
-
+      if (data.ok) return this.ok(data.result.url);
       throw new Error(data.error || 'Failed to publish to Telegraph');
     } catch (error: any) {
-      logger.error(`[${this.name}] Publish failed`, error);
-      return {
-        platform: this.name,
-        success: false,
-        error: error.message
-      };
+      return this.fail(error);
     }
   }
 }

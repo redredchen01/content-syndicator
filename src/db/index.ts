@@ -1,7 +1,19 @@
+/**
+ * SQLite singleton + back-compat exports for v0.1 callers.
+ *
+ * v0.2 prefers `src/db/repositories.ts` (multi-namespace, db-injected).
+ * Legacy savePost / updateTaskProgress / getTaskProgress / getPostsHistory
+ * remain wired to the singleton so untouched v0.1 paths keep working.
+ *
+ * Tests should NOT import this module — they instantiate their own
+ * `:memory:` Database and call applyV2Schema(db) directly.
+ */
+
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger';
+import { applyV2Schema } from './schema';
 
 const DB_DIR = path.join(process.cwd(), '.data');
 if (!fs.existsSync(DB_DIR)) {
@@ -9,18 +21,39 @@ if (!fs.existsSync(DB_DIR)) {
 }
 
 const db = new Database(path.join(DB_DIR, 'syndicator.db'));
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
-// Initialize tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS posts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    original_url TEXT NOT NULL,
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
-    results_json TEXT NOT NULL
-  )
-`);
+applyV2Schema(db);
+
+export { db };
+
+// Re-export repositories so callers can do `import { brandProfile } from './db'`.
+export {
+  brandProfile,
+  publishJobs,
+  linkChecks,
+  anchorHistory,
+  llmCalls,
+  draftBatches,
+} from './repositories';
+
+export type {
+  BrandProfile,
+  PublishJob,
+  LinkCheck,
+  LinkCheckType,
+  LinkClassification,
+  JobType,
+  JobStatus,
+  LlmCallKind,
+  DraftBatch,
+  DraftBatchStatus,
+} from './repositories';
+
+// ---------------------------------------------------------------------------
+// v0.1 back-compat API (kept identical so server.ts / cli.ts keep working)
+// ---------------------------------------------------------------------------
 
 export interface SavedPost {
   id: number;
@@ -31,18 +64,30 @@ export interface SavedPost {
   results_json: string;
 }
 
-export function savePost(originalUrl: string, title: string, content: string, results: any[]) {
+export function savePost(
+  originalUrl: string,
+  title: string,
+  content: string,
+  results: unknown[],
+  batchId?: string,
+): void {
   try {
-    const stmt = db.prepare('INSERT INTO posts (original_url, title, content, results_json) VALUES (?, ?, ?, ?)');
-    stmt.run(originalUrl, title, content, JSON.stringify(results));
-    logger.success('Post saved to local SQLite database.');
+    const stmt = db.prepare(
+      'INSERT INTO posts (original_url, title, content, results_json, batch_id) VALUES (?, ?, ?, ?, ?)',
+    );
+    stmt.run(originalUrl, title, content, JSON.stringify(results), batchId ?? null);
+    logger.success?.('Post saved to local SQLite database.');
   } catch (error) {
     logger.error('Failed to save post to local database', error);
   }
 }
 
-// ... existing code ...
-export function updateTaskProgress(taskId: string, platform: string, status: string, error?: string): void {
+export function updateTaskProgress(
+  taskId: string,
+  platform: string,
+  status: string,
+  error?: string,
+): void {
   try {
     const stmt = db.prepare(`
       INSERT INTO task_progress (task_id, platform, status, last_error, updated_at)
@@ -53,16 +98,23 @@ export function updateTaskProgress(taskId: string, platform: string, status: str
         updated_at = excluded.updated_at
     `);
     stmt.run(taskId, platform, status, error || null);
-  } catch (error) {
-    logger.error('Failed to update task progress', error);
+  } catch (e) {
+    logger.error('Failed to update task progress', e);
   }
 }
 
-export function getTaskProgress(taskId: string): Array<{ platform: string; status: string; last_error: string | null }> {
+export function getTaskProgress(
+  taskId: string,
+): Array<{ platform: string; status: string; last_error: string | null }> {
   try {
-    const stmt = db.prepare('SELECT platform, status, last_error FROM task_progress WHERE task_id = ?');
-    const rows = stmt.all(taskId) as Array<{ platform: string; status: string; last_error: string | null }>;
-    return rows;
+    const stmt = db.prepare(
+      'SELECT platform, status, last_error FROM task_progress WHERE task_id = ?',
+    );
+    return stmt.all(taskId) as Array<{
+      platform: string;
+      status: string;
+      last_error: string | null;
+    }>;
   } catch (error) {
     logger.error('Failed to get task progress', error);
     return [];
@@ -78,4 +130,3 @@ export function getPostsHistory(): SavedPost[] {
     return [];
   }
 }
-// ... existing code ...

@@ -45,7 +45,7 @@ export class AgentMemory {
       if (this.memories.length > this.maxMemories) {
         this.memories = this.memories.slice(-this.maxMemories);
       }
-      fs.writeFileSync(this.memoryPath, JSON.stringify(this.memories, null, 2), 'utf-8');
+      fs.writeFileSync(this.memoryPath, JSON.stringify(this.memories), 'utf-8');
     } catch (error: any) {
       logger.warn(`[Memory] Failed to save memories: ${error.message}`);
     }
@@ -63,19 +63,14 @@ export class AgentMemory {
     logger.info(`[Memory] Stored new memory: ${newMemory.id} (${memory.type})`);
   }
 
-  async recall(task: string, context: any): Promise<Memory[]> {
-    // Simple keyword-based recall (can be enhanced with embeddings)
-    const keywords = this.extractKeywords(task + JSON.stringify(context));
-    
-    const relevant = this.memories.filter(memory => {
-      const memoryText = JSON.stringify(memory);
-      return keywords.some(keyword => memoryText.toLowerCase().includes(keyword.toLowerCase()));
+  async recall(task: string, _context: any): Promise<Memory[]> {
+    const keywords = this.extractKeywords(task);
+    const relevant = this.memories.filter(m => {
+      // Only search lightweight fields — avoids stringify of large result objects
+      const text = `${m.type} ${m.action ?? ''}`.toLowerCase();
+      return keywords.some(kw => text.includes(kw));
     });
-
-    // Sort by recency and relevance
-    return relevant
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, 10); // Return top 10
+    return relevant.sort((a, b) => b.timestamp - a.timestamp).slice(0, 10);
   }
 
   async recallByAction(action: string): Promise<Memory[]> {
@@ -106,10 +101,10 @@ export class AgentMemory {
   }
 
   getStats(): { total: number; byType: Record<string, number> } {
-    const byType: Record<string, number> = {};
-    this.memories.forEach(m => {
-      byType[m.type] = (byType[m.type] || 0) + 1;
-    });
+    const byType = this.memories.reduce<Record<string, number>>((acc, m) => {
+      acc[m.type] = (acc[m.type] ?? 0) + 1;
+      return acc;
+    }, {});
     return { total: this.memories.length, byType };
   }
 }

@@ -76,7 +76,7 @@ export class ContentAgent {
 
         // Think: Plan next action
         this.setState('thinking');
-        const plan = await this.planner.plan(this.context, task);
+        const plan = this.planner.plan(this.context, task);
 
         if (plan.action === 'complete') {
           logger.success('[Agent] Task completed successfully');

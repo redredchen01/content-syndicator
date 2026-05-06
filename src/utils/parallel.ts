@@ -1,28 +1,30 @@
-import { exec } from 'child_process';
-import util from 'util';
-import path from 'path';
-import fs from 'fs';
 import { logger } from './logger';
 
-const execPromise = util.promisify(exec);
+export type ParallelResult<R> =
+  | { ok: true; value: R }
+  | { ok: false; error: Error };
 
-// 并行处理执行器
+/**
+ * Run tasks concurrently up to `concurrency` at a time.
+ * Each result is captured individually — a single task failure never
+ * aborts the remaining workers (no fail-fast behavior).
+ */
 export async function runParallel<T, R>(
-  items: T[], 
-  task: (item: T) => Promise<R>, 
-  concurrency: number = 3
-): Promise<R[]> {
-  const results: R[] = [];
+  items: T[],
+  task: (item: T) => Promise<R>,
+  concurrency: number = 3,
+): Promise<ParallelResult<R>[]> {
+  const results: ParallelResult<R>[] = new Array(items.length);
   let index = 0;
 
   async function worker() {
     while (index < items.length) {
       const currentIndex = index++;
       try {
-        results[currentIndex] = await task(items[currentIndex]);
+        results[currentIndex] = { ok: true, value: await task(items[currentIndex]) };
       } catch (e: any) {
         logger.error(`Parallel task failed at index ${currentIndex}`, e);
-        throw e;
+        results[currentIndex] = { ok: false, error: e instanceof Error ? e : new Error(String(e)) };
       }
     }
   }

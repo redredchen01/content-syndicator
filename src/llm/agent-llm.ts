@@ -1,31 +1,12 @@
-import { OpenAI } from 'openai';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
-import { ChatCompletionTool } from 'openai/resources/chat/completions';
-import { retryOperation } from '../utils/retry';
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
+import { retryOperation } from '../utils/smartRetry';
 import { RETRY_CONFIG } from '../constants';
 import { logger } from '../utils/logger';
+import type { LLMMessage, LLMResponse, LLMWithToolsOptions, ToolCall } from '../types';
+import { getOpenAIClient, getGeminiClient, safetySettings } from './client';
 
-export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  tool_calls?: any[];
-  tool_call_id?: string;
-  name?: string;
-}
-
-export interface LLMResponse {
-  content: string;
-  tool_calls?: any[];
-  raw?: any;
-}
-
-export interface LLMWithToolsOptions {
-  model?: string;
-  messages: LLMMessage[];
-  tools?: ChatCompletionTool[];
-  temperature?: number;
-  maxTokens?: number;
-}
+// Re-export so existing callers (agent/core.ts) don't need to change imports
+export type { LLMMessage, LLMResponse, LLMWithToolsOptions };
 
 export async function invokeLLMWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
   const selectedModel = options.model || process.env.SELECTED_MODEL || '';
@@ -56,17 +37,13 @@ export async function invokeLLMWithTools(options: LLMWithToolsOptions): Promise<
 }
 
 async function invokeOpenAIWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not configured');
-  }
-
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const openai = getOpenAIClient(); // throws if OPENAI_API_KEY not set
 
   return await retryOperation(async () => {
     const response = await openai.chat.completions.create({
       model: options.model || 'gpt-4o-mini',
       messages: options.messages as any,
-      tools: options.tools,
+      tools: options.tools as ChatCompletionTool[] | undefined,
       temperature: options.temperature ?? 0.7,
       max_tokens: options.maxTokens,
     });
@@ -75,19 +52,15 @@ async function invokeOpenAIWithTools(options: LLMWithToolsOptions): Promise<LLMR
 
     return {
       content: message.content || '',
-      tool_calls: message.tool_calls,
+      tool_calls: message.tool_calls as ToolCall[] | undefined,
       raw: response,
     };
-  }, RETRY_CONFIG.MAX_ATTEMPTS, RETRY_CONFIG.BASE_DELAY_MS, RETRY_CONFIG.MAX_DELAY_MS);
+  }, RETRY_CONFIG.MAX_ATTEMPTS);
 }
 
 async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not configured');
-  }
-
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ 
+  const genAI = getGeminiClient(); // throws if GEMINI_API_KEY not set
+  const model = genAI.getGenerativeModel({
     model: options.model || 'gemini-1.5-flash',
   });
 
@@ -108,12 +81,7 @@ async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMR
     });
   }
 
-  const safetySettings = [
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  ];
+  // safetySettings imported from ./client (shared with llm/index.ts)
 
   return await retryOperation(async () => {
     const result = await model.generateContent({
@@ -129,12 +97,13 @@ async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMR
 
     const text = result.response.text();
 
+    logger.warn('[LLM] Gemini function calling not implemented, tool_calls will be empty');
     return {
       content: text,
-      tool_calls: [], // Simplified - full tool support would parse function calls from response
+      tool_calls: [],
       raw: result,
     };
-  }, RETRY_CONFIG.MAX_ATTEMPTS, RETRY_CONFIG.BASE_DELAY_MS, RETRY_CONFIG.MAX_DELAY_MS);
+  }, RETRY_CONFIG.MAX_ATTEMPTS);
 }
 
 export async function invokeLLMSimple(prompt: string, fallbackContent?: string, fallbackTitle?: string): Promise<any> {
@@ -146,7 +115,12 @@ export async function invokeLLMSimple(prompt: string, fallbackContent?: string, 
   try {
     const response = await invokeLLMWithTools({ messages });
     if (!response.content) throw new Error('No output from LLM');
-    return JSON.parse(response.content);
+    try {
+      return JSON.parse(response.content);
+    } catch {
+      logger.warn('[LLM] invokeLLMSimple: response is not JSON, returning raw string');
+      return response.content;
+    }
   } catch (error: any) {
     if (fallbackContent && fallbackTitle) {
       return {

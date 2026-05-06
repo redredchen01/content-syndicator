@@ -1,201 +1,1242 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" x-data="syndicatorApp()" x-init="init()">
 <head>
   <meta charset="UTF-8">
-  <title>內容多渠道發佈</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多渠道外鏈分發系統 v0.2</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .prose h1 { font-size: 1.25rem; font-weight: 700; margin-bottom: .5rem; }
+    .prose h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: .4rem; }
+    .prose p  { margin-bottom: .6rem; line-height: 1.6; }
+    .prose a  { color: #2563eb; text-decoration: underline; }
+    .prose code { background: #f3f4f6; padding: .1rem .3rem; border-radius: .2rem; font-size: .85em; }
+    .prose pre  { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: .5rem; overflow-x: auto; }
+    .prose blockquote { border-left: 3px solid #93c5fd; padding-left: 1rem; color: #6b7280; }
+    .tab-chip { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+  </style>
 </head>
-<body class="bg-gray-50 text-gray-900">
-<div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
-  <!-- 简化后的顶部导航 -->
-  <div class="flex justify-between items-center mb-6">
-    <h1 class="text-2xl font-semibold text-gray-800">內容發佈面板</h1>
-    <div class="flex space-x-4">
-      <button id="navPublish" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">发布</button>
-      <button id="navHistory" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">历史</button>
-      <button id="navSettings" class="text-gray-500 hover:text-blue-600 border-b-2 border-blue-600 px-3 py-1">设置</button>
-    </div>
+<body class="bg-gray-100 min-h-screen flex">
+
+<!-- ── Sidebar ──────────────────────────────────────────────────── -->
+<aside class="w-56 bg-white shadow-md flex-shrink-0 flex flex-col">
+  <div class="p-5 border-b">
+    <h1 class="text-base font-bold text-gray-800 flex items-center gap-2">
+      <svg class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      Syndicator
+    </h1>
+    <p class="text-[10px] text-gray-400 mt-0.5">v0.2 第三方口吻分發</p>
   </div>
+  <nav class="flex-1 mt-3">
+    <template x-for="item in navItems" :key="item.id">
+      <a href="#" @click.prevent="switchView(item.id)"
+         :class="view === item.id ? 'bg-blue-50 text-blue-600 border-r-4 border-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'"
+         class="flex items-center px-5 py-2.5 text-sm transition-colors">
+        <span x-text="item.icon" class="mr-2.5 text-base"></span>
+        <span x-text="item.label"></span>
+        <span x-show="item.id === 'queue' && pendingCount > 0"
+              class="ml-auto bg-amber-100 text-amber-700 text-[10px] px-1.5 rounded-full"
+              x-text="pendingCount"></span>
+      </a>
+    </template>
+  </nav>
+  <div class="p-3 border-t space-y-2">
+    <div :class="brandReady ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'"
+         class="text-[11px] px-2 py-1.5 rounded text-center font-medium"
+         x-text="brandReady ? '✓ 品牌資料已就緒' : '⚠ 請先配置品牌資料'"></div>
+    <a href="/admin.html" target="_blank"
+       class="block text-[11px] text-gray-500 hover:text-blue-600 text-center transition-colors">
+      ⚙ 高級管理 ↗
+    </a>
+  </div>
+</aside>
 
-  <!-- 发布视图 -->
-  <div id="viewPublish" class="hidden">
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-      <div class="hidden lg:block flex justify-between items-start mb-2">
-        <span class="font-semibold text-blue-900">内容来源</span>
-        <select id="sourceType" class="border rounded p-2 w-full">
-          <option value="url">链接</option>
-          <option value="manual">手动输入</option>
-        </select>
-      </div>
+<!-- ── Main ─────────────────────────────────────────────────────── -->
+<main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+  <header class="bg-white shadow-sm px-6 py-3 flex justify-between items-center">
+    <h2 class="text-base font-semibold text-gray-700" x-text="currentTitle"></h2>
+    <div class="flex items-center gap-2 text-sm text-gray-500" x-show="view === 'publish' && phase === 'preview'">
+      <span x-text="`批次: ${batchId}`" class="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded"></span>
+    </div>
+  </header>
 
-      <!-- 文章标题 -->
-      <div class="space-y-2">
-        <label class="block font-medium text-gray-700">标题</label>
-        <input type="text" id="titleInput" class="border rounded p-2 w-full" />
-      </div>
+  <div class="flex-1 overflow-y-auto p-6">
 
-      <!-- Tags & 摘要 -->
-      <div class="grid grid-cols-2 gap-2">
+    <!-- ══ VIEW: Publish (Input Phase) ══════════════════════════════ -->
+    <div x-show="view === 'publish' && phase === 'input'" x-cloak>
+      <div class="max-w-2xl mx-auto bg-white rounded-xl border shadow-sm p-6 space-y-5">
+        <h3 class="font-semibold text-gray-800">輸入草稿 → 生成 7 個平台變體</h3>
+
+        <!-- Draft textarea -->
         <div>
-          <label class="block font-medium text-gray-700">标签 (最多 4)</label>
-          <input type="text" id="tagsInput" class="border rounded p-2 w-full" placeholder="ai,tech,news" />
+          <div class="flex justify-between items-center mb-1">
+            <label class="text-sm font-medium text-gray-700">文章草稿 *</label>
+            <span :class="draftCharCount < 600 ? 'text-red-500' : 'text-green-600'"
+                  class="text-xs" x-text="`${draftCharCount} 字 (最少 600)`"></span>
+          </div>
+          <textarea x-model="draft" rows="12" @input="draftCharCount = draft.replace(/\s+/g,'').length"
+                    placeholder="粘貼您的文章草稿... 系統將生成 7 個第三方口吻變體"
+                    class="w-full border rounded-lg px-3 py-2 text-sm font-mono resize-none outline-none focus:ring-2 focus:ring-blue-500"></textarea>
         </div>
+
+        <!-- Title (optional) -->
         <div>
-          <label class="block font-medium text-gray-700">SEO 摘要</label>
-          <input type="text" id="excerptInput" class="border rounded p-2 w-full" placeholder="简短的 1-2 句描述" />
+          <label class="block text-sm font-medium text-gray-700 mb-1">標題（可選，不填則由 LLM 生成）</label>
+          <input x-model="draftTitle" type="text" placeholder="文章標題..." class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <!-- Target URL override -->
+        <div x-show="brandProfile && brandProfile.target_urls && brandProfile.target_urls.length > 1">
+          <label class="block text-sm font-medium text-gray-700 mb-1">目標落地頁（可選，默認使用品牌首選）</label>
+          <select x-model="targetUrlOverride" class="w-full border rounded-lg px-3 py-2 text-sm outline-none">
+            <option value="">— 使用品牌默認 —</option>
+            <template x-for="t in (brandProfile?.target_urls || [])" :key="t.url">
+              <option :value="t.url" x-text="`${t.url} [${t.context_tag}]`"></option>
+            </template>
+          </select>
+        </div>
+
+        <!-- Error -->
+        <div x-show="generateError" class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2 rounded-lg" x-text="generateError"></div>
+
+        <!-- Submit -->
+        <button @click="generate()" :disabled="draftCharCount < 600 || generating"
+                :class="draftCharCount < 600 || generating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'"
+                class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-sm transition-colors">
+          <span x-show="!generating">⚡ 生成 7 個平台變體（約 60-90 秒）</span>
+          <span x-show="generating" class="flex items-center justify-center gap-2">
+            <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            </svg>
+            生成中... <span x-text="generatingStep"></span>
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══ VIEW: Publish (Preview Phase) ════════════════════════════ -->
+    <div x-show="view === 'publish' && phase === 'preview'" x-cloak class="space-y-4">
+
+      <!-- Lint banner -->
+      <div x-show="lintResult && (lintResult.batchViolation || Object.keys(lintResult.variantViolations || {}).length > 0)"
+           class="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 space-y-1">
+        <div class="font-semibold text-amber-800 text-sm">⚠ Lint 警告（發佈已阻止）</div>
+        <div x-show="lintResult?.batchViolation" class="text-xs text-amber-700"
+             x-text="lintResult?.batchViolation ? `批次相似度過高: ${lintResult.batchViolation.platforms[0]} ↔ ${lintResult.batchViolation.platforms[1]} (Jaccard ${(lintResult.batchViolation.similarity * 100).toFixed(0)}%)` : ''"></div>
+        <template x-for="[platform, match] in Object.entries(lintResult?.variantViolations || {})" :key="platform">
+          <div class="text-xs text-amber-700" x-text="`${platform}: 身份暴露詞「${match.matched}」`"></div>
+        </template>
+      </div>
+
+      <!-- Naked-URL anchor banner (anchor generation exhausted all retries) -->
+      <div x-show="hasNakedUrlVariants"
+           class="bg-orange-50 border border-orange-200 rounded-xl px-5 py-3 space-y-1">
+        <div class="font-semibold text-orange-800 text-sm">⚓ 錨詞生成失敗（發佈已阻止）</div>
+        <template x-for="v in variants.filter(v => v.generation_status === 'ok' && !skippedPlatforms.has(v.platform) && v.anchor_words?.includes('__naked_url__'))" :key="v.platform">
+          <div class="text-xs text-orange-700"
+               x-text="`${v.platform}: 錨詞 LLM 重試已耗盡，請點「重新生成本 tab」`"></div>
+        </template>
+      </div>
+
+      <!-- 7-Tab preview -->
+      <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <!-- Tab bar -->
+        <div class="flex border-b overflow-x-auto">
+          <template x-for="(v, i) in variants" :key="v.platform">
+            <button @click="activeTab = i"
+                    :class="[
+                      activeTab === i ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50' : 'text-gray-500 hover:bg-gray-50',
+                      skippedPlatforms.has(v.platform) ? 'opacity-40 line-through' : ''
+                    ]"
+                    class="flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium whitespace-nowrap transition-colors">
+              <span :class="{
+                'bg-blue-500': v.persona_group === 'tech_blogger',
+                'bg-purple-500': v.persona_group === 'personal_essay',
+                'bg-orange-500': v.persona_group === 'reviewer',
+                'bg-red-500': v.generation_status === 'failed'
+              }" class="tab-chip"></span>
+              <span x-text="v.platform"></span>
+              <span x-show="v.generation_status === 'failed'" class="text-red-500">✗</span>
+              <span x-show="lintResult?.variantViolations?.[v.platform]" class="text-amber-500">!</span>
+              <span x-show="v.anchor_words?.includes('__naked_url__')" class="text-orange-500" title="錨詞生成失敗">⚓</span>
+            </button>
+          </template>
+        </div>
+
+        <!-- Tab content -->
+        <div class="p-5" x-show="variants.length > 0">
+          <template x-if="variants[activeTab]">
+            <div>
+              <div x-show="variants[activeTab].generation_status === 'failed'"
+                   class="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg mb-4">
+                <strong>生成失敗：</strong><span x-text="variants[activeTab].error"></span>
+                <button @click="regenerateTab(activeTab)" class="ml-3 text-xs underline">重試</button>
+              </div>
+
+              <div x-show="variants[activeTab].generation_status === 'ok'">
+                <!-- Title -->
+                <div class="mb-3">
+                  <div class="text-xs text-gray-500 uppercase font-medium mb-1">標題</div>
+                  <div class="text-base font-semibold text-gray-800" x-text="variants[activeTab].title"></div>
+                </div>
+
+                <!-- Anchor words -->
+                <div class="mb-3 flex items-center gap-2 flex-wrap">
+                  <span class="text-xs text-gray-500 font-medium">錨詞：</span>
+                  <template x-for="anchor in variants[activeTab].anchor_words" :key="anchor">
+                    <span x-show="anchor !== '__naked_url__'"
+                          class="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full"
+                          x-text="anchor"></span>
+                    <span x-show="anchor === '__naked_url__'"
+                          class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">裸鏈（無錨詞）</span>
+                  </template>
+                </div>
+
+                <!-- Target URL -->
+                <div class="mb-3 text-xs text-gray-500">
+                  落地 URL: <a :href="variants[activeTab].target_url" target="_blank" class="text-blue-600 underline" x-text="variants[activeTab].target_url"></a>
+                </div>
+
+                <!-- Body preview -->
+                <div class="border rounded-lg bg-gray-50 p-4 max-h-80 overflow-y-auto prose prose-sm max-w-none text-sm"
+                     x-html="marked.parse(variants[activeTab].body_markdown || '')"></div>
+
+                <!-- Actions -->
+                <div class="flex gap-2 mt-4">
+                  <button @click="regenerateTab(activeTab)"
+                          :disabled="regenLoading === activeTab"
+                          class="text-xs px-3 py-1.5 border rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                    <span x-show="regenLoading !== activeTab">🔄 重新生成本 tab</span>
+                    <span x-show="regenLoading === activeTab">生成中...</span>
+                  </button>
+                  <button @click="toggleSkip(activeTab)"
+                          :class="skippedPlatforms.has(variants[activeTab].platform) ? 'bg-gray-700 text-white' : 'border hover:bg-gray-50'"
+                          class="text-xs px-3 py-1.5 rounded-lg">
+                    <span x-text="skippedPlatforms.has(variants[activeTab].platform) ? '↩ 恢復此 tab' : '✕ 跳過此 tab'"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 
-      <!-- 内容输入 -->
-      <div class="mt-4 space-y-2">
-        <label class="block font-medium text-gray-700">正文编辑区</label>
-        <textarea id="contentInput" class="border rounded p-2 w-full h-[200px] focus:ring-2 focus:ring-blue-500" oninput="updatePreview()"></textarea>
+      <!-- Inline error for regenerate / dispatch failures (replaces browser alert()) -->
+      <div x-show="publishError"
+           class="bg-red-50 border border-red-200 rounded-xl px-5 py-3 flex items-center justify-between gap-3">
+        <span class="text-sm text-red-700" x-text="publishError"></span>
+        <button @click="publishError = ''" class="text-xs text-red-400 hover:text-red-600 shrink-0">✕</button>
       </div>
 
-      <!-- 预览 -->
-      <div class="hidden lg:block mt-4">
-        <label class="block font-medium text-gray-700">实时预览</label>
-        <div id="markdownPreview" class="border rounded p-2 bg-gray-50 h-[200px] overflow-y-auto"></div>
+      <!-- Dispatch controls -->
+      <div class="flex items-center justify-between bg-white rounded-xl border shadow-sm px-5 py-4">
+        <div class="text-sm text-gray-600">
+          <span x-text="activeVariantCount"></span> 個平台準備發佈
+          <span x-show="skippedPlatforms.size > 0" class="text-gray-400" x-text="`（已跳過 ${skippedPlatforms.size} 個）`"></span>
+        </div>
+        <div class="flex gap-3">
+          <button @click="phase = 'input'" class="text-sm px-4 py-2 border rounded-lg hover:bg-gray-50">← 重新輸入</button>
+          <button @click="dispatch()"
+                  :disabled="!canDispatch || dispatching"
+                  :class="canDispatch && !dispatching ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed'"
+                  class="text-sm px-5 py-2 rounded-lg text-white font-semibold transition-colors">
+            <span x-show="!dispatching">🚀 一鍵發佈 (<span x-text="activeVariantCount"></span> 個)</span>
+            <span x-show="dispatching">發佈中...</span>
+          </button>
+        </div>
+      </div>
+
+      <div x-show="!canDispatch && lintHasBatchViolation" class="text-xs text-amber-600 text-center">
+        批次 Jaccard 相似度過高 — 請重新生成相似的 tab 再發佈
       </div>
     </div>
 
-    <!-- 发布目标平台选择 -->
-    <div class="mt-6 flex flex-wrap gap-2">
-      <span class="text-sm text-gray-600">目标平台：</span>
-      <div id="platformCheckboxes" class="flex flex-wrap gap-2">
-        <!-- 动态加载平台列表 -->
-      </div>
-      <div class="mt-2 flex items-center">
-        <label class="flex items-center space-x-2">
-          <input type="radio" name="publishStatus" value="draft" checked class="text-blue-600 focus:ring-blue-500" />
-          <span class="text-sm text-gray-700">保存为草稿</span>
-        </label>
-        <label class="flex items-center space-x-2">
-          <input type="radio" name="publishStatus" value="public" class="text-blue-600 focus:ring-blue-500" />
-          <span class="text-sm text-gray-700">公开发布</span>
-        </label>
+    <!-- ══ VIEW: Queue Status ════════════════════════════════════════ -->
+    <div x-show="view === 'queue'" x-cloak>
+      <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b flex justify-between items-center">
+          <span class="font-medium text-gray-700 text-sm">作業佇列</span>
+          <span class="text-xs text-gray-400" x-text="`${queueJobs.length} 條作業 · 每 5 秒刷新`"></span>
+        </div>
+        <div x-show="queueJobs.length === 0" class="py-16 text-center text-gray-400 text-sm">暫無作業</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs" x-show="queueJobs.length > 0">
+            <thead class="bg-gray-50 border-b">
+              <tr>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">批次</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">平台</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">狀態</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">計劃時間</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">重試</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">錯誤</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <template x-for="job in queueJobs" :key="job.id">
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-2 font-mono text-gray-400" x-text="job.batch_id?.slice(0,14)"></td>
+                  <td class="px-4 py-2 text-gray-700" x-text="job.platform"></td>
+                  <td class="px-4 py-2">
+                    <span :class="{
+                      'bg-blue-100 text-blue-700': job.status === 'running',
+                      'bg-yellow-100 text-yellow-700': job.status === 'scheduled',
+                      'bg-green-100 text-green-700': job.status === 'succeeded',
+                      'bg-red-100 text-red-700': job.status === 'failed_terminal',
+                      'bg-orange-100 text-orange-700': job.status === 'failed_retryable',
+                      'bg-gray-100 text-gray-600': job.status === 'skipped',
+                    }" class="px-2 py-0.5 rounded-full text-[11px] font-medium" x-text="job.status"></span>
+                  </td>
+                  <td class="px-4 py-2 text-gray-500" x-text="job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString() : '-'"></td>
+                  <td class="px-4 py-2 text-gray-500" x-text="job.attempts"></td>
+                  <td class="px-4 py-2 text-red-500 max-w-xs truncate" x-text="job.last_error || ''"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-    <!-- 行动按钮 -->
-    <div class="mt-6 flex space-x-3">
-      <button id="generateBtn" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 flex items-center justify-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.26-1.972L9 17.59V5a2 2 0 012-2h3.18L2 5c1.743 0 3.413.5 4.5 1.36V4a1 1 0 011-1h1a1 1 0 011 1v1c0 .552.448 1 .998 1h4.02c1.087 0 2 .5 2 1v1c0 .276.26.5.875.5L17 11.9v6a1 1 0 01-1 1h-1a1 1 0 01-1-1v-5c0-.276-.26-.5-.7-.5z" />
-        </svg>
-        生成内容
-      </button>
-      <button id="autoPublishBtn" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 flex items-center justify-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v2m0 8v2m9-9h-2M6 12h-2m14 0h-2M6 18h-2m14 0h-2M12 3v2m0 16v2m-9-8h2M6 12h2" />
-        </svg>
-        自动发布
-      </button>
-      <button id="addPromptBtn" class="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700 flex items-center justify-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 1.5A1.5 1.5 0 0110.5 10.5a1.5 1.5 0 010 3 1.5 1.5 0 01-3 0c0-.605.395-1.2 1-1.2s1 .595 1 1.2A1.5 1.5 0 019 13.5c0-.447-.112-.875-.293-1.272l3-2.64a1 1 0 010-1.41l-3-2.64c-.182-.5-.5-.5-1.1 0l-3 2.64c-.182.5-.368.95-.368 1.41 0 .425.112.853.368 1.272l3 2.64zm0 0l3 2.64M12 15a3 3 0 100-6 3 3 0 000 6z" />
-        </svg>
-        自定义提示词
-      </button>
+    <!-- ══ VIEW: Brand Profile ═══════════════════════════════════════ -->
+    <div x-show="view === 'brand'" x-cloak>
+      <div class="max-w-2xl mx-auto bg-white rounded-xl border shadow-sm p-6 space-y-5">
+        <h3 class="font-semibold text-gray-800">品牌資料庫</h3>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">品牌主名稱 *</label>
+          <input x-model="brandForm.name" type="text" class="w-full border rounded-lg px-3 py-2 text-sm outline-none">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">品牌別名（逗號分隔）</label>
+          <input x-model="brandForm.nameVariants" type="text" placeholder="別名1, 別名2" class="w-full border rounded-lg px-3 py-2 text-sm outline-none">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">目標 URL（每行: URL 標籤）</label>
+          <textarea x-model="brandForm.targetUrls" rows="4" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none" placeholder="https://example.com home&#10;https://example.com/product product:main"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">身份暴露禁用詞（每行一條，至少 5 條）</label>
+          <textarea x-model="brandForm.blocklist" rows="5" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none" placeholder="我们&#10;官方&#10;我方&#10;本公司&#10;内部"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">錨詞禁用詞（每行一條）</label>
+          <textarea x-model="brandForm.anchorBlocklist" rows="3" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none" placeholder="click here&#10;read more"></textarea>
+        </div>
+
+        <!-- Digest channel -->
+        <div class="border-t pt-4">
+          <div class="text-sm font-semibold text-gray-700 mb-3">📬 每日日報渠道</div>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">發送方式</label>
+              <select x-model="brandForm.digestChannel"
+                      class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300">
+                <option value="none">不發送</option>
+                <option value="email">Email（需設定 DIGEST_SENDER_EMAIL）</option>
+                <option value="telegram">Telegram</option>
+              </select>
+            </div>
+            <div x-show="brandForm.digestChannel !== 'none'">
+              <label class="block text-sm font-medium text-gray-700 mb-1"
+                     x-text="brandForm.digestChannel === 'email' ? '收件地址' : 'Telegram Token'"></label>
+              <input x-model="brandForm.digestDestination" type="text"
+                     :placeholder="brandForm.digestChannel === 'email'
+                       ? 'ops@yourdomain.com'
+                       : 'bot<token>:<chatId>  例: bot123456789:abc123'"
+                     class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300">
+              <p x-show="brandForm.digestChannel === 'email'" class="text-xs text-gray-400 mt-1">
+                發件地址在 Settings → Google Sheets / 摘要 中設定（DIGEST_SENDER_EMAIL）
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="brandSaveMsg" :class="brandSaveMsg?.startsWith('✓') ? 'text-green-600' : 'text-red-600'" class="text-sm" x-text="brandSaveMsg"></div>
+
+        <button @click="saveBrand()" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium text-sm hover:bg-blue-700">保存設定</button>
+      </div>
     </div>
-  </div>
 
-  <!-- 历史视图 -->
-  <div id="viewHistory" class="hidden mt-6">
-    <p class="text-gray-500 mb-4 italic">加载历史...</p>
-    <div id="historyContainer" class="space-y-4"></div>
-  </div>
+    <!-- ══ VIEW: History ═════════════════════════════════════════════ -->
+    <div x-show="view === 'history'" x-cloak class="space-y-4">
+      <div x-show="historyItems.length === 0" class="text-center py-16 text-gray-400">暫無記錄</div>
+      <template x-for="item in historyItems" :key="item.id">
+        <div class="bg-white rounded-xl border shadow-sm p-4">
+          <div class="flex justify-between items-start mb-2">
+            <h4 class="font-semibold text-gray-800 text-sm" x-text="item.title"></h4>
+            <span class="text-[10px] text-gray-400" x-text="new Date(item.created_at).toLocaleString()"></span>
+          </div>
+          <div class="text-[11px] text-gray-500 mb-3 truncate" x-text="item.original_url"></div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="r in JSON.parse(item.results || '[]')" :key="r.platform">
+              <a :href="r.publishedUrl || '#'" target="_blank"
+                 :class="r.success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'"
+                 class="text-[11px] px-2 py-0.5 rounded border" x-text="r.platform"></a>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
 
-  <!-- 设置视图 -->
-  <div id="viewSettings" class="hidden mt-6">
-    <p class="text-gray-500 mb-4">加载设置...</p>
-    <div id="settingsContainer"></div>
-  </div>
+    <!-- ══ VIEW: Settings ════════════════════════════════════════════ -->
+    <div x-show="view === 'settings'" x-cloak>
+      <div class="max-w-3xl mx-auto space-y-4">
 
-  <!-- 提示词编辑视图 -->
-  <div id="viewPrompts" class="hidden mt-6">
-    <h2 class="text-lg font-semibold mb-2">自定义提示词</h2>
-    <textarea id="mainPromptInput" class="border rounded p-2 w-full h-[150px]"></textarea>
-    <textarea id="promoPromptInput" class="border rounded p-2 w-full h-[150px]"></textarea>
-    <button class="bg-blue-600 text-white px-4 py-2 rounded mt-2">保存</button>
-  </div>
+        <!-- Header with global actions -->
+        <div class="bg-white rounded-xl border shadow-sm px-5 py-3 flex items-center justify-between">
+          <div>
+            <h3 class="font-semibold text-gray-800">系統設置</h3>
+            <p class="text-xs text-gray-500 mt-0.5">改動立即生效，無需重啟服務</p>
+          </div>
+          <button @click="batchValidatePlatforms()" :disabled="batchValidating"
+                  :class="batchValidating ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
+                  class="text-xs text-white px-3 py-1.5 rounded-md transition-colors">
+            <span x-show="!batchValidating">🔍 全部測試</span>
+            <span x-show="batchValidating">測試中…</span>
+          </button>
+        </div>
 
-  <!-- 尾部 -->
-  <div class="mt-8 text-center text-sm text-gray-500 border-t pt-6">
-    © 2026 內容多渠道发布系统
-  </div>
-</div>
+        <!-- Status toast -->
+        <div x-show="settingsToast.text"
+             :class="settingsToast.kind === 'ok' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'"
+             class="border rounded-lg px-4 py-2 text-sm" x-text="settingsToast.text"></div>
+
+        <!-- ═════ Section 1: LLM 與基礎 ════════════════════════════════ -->
+        <details class="bg-white rounded-xl border shadow-sm" :open="sectionOpen.llm" @toggle="sectionOpen.llm = $event.target.open">
+          <summary class="px-5 py-3 cursor-pointer select-none flex items-center justify-between">
+            <span class="font-medium text-gray-800">⚡ LLM 與基礎</span>
+            <span class="text-xs text-gray-500" x-text="settingsRaw.GEMINI_API_KEY || settingsRaw.OPENAI_API_KEY ? '已配置' : '未配置'"></span>
+          </summary>
+          <div class="px-5 pb-5 pt-1 space-y-4 border-t">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Gemini API Key</label>
+              <input x-model="llmForm.GEMINI_API_KEY" type="password"
+                     :placeholder="settingsRaw.GEMINI_API_KEY ? `當前：${settingsRaw.GEMINI_API_KEY}（留空則保留）` : '貼上 Gemini key'"
+                     class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-blue-300">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">OpenAI API Key</label>
+              <input x-model="llmForm.OPENAI_API_KEY" type="password"
+                     :placeholder="settingsRaw.OPENAI_API_KEY ? `當前：${settingsRaw.OPENAI_API_KEY}（留空則保留）` : '貼上 OpenAI key'"
+                     class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-blue-300">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">選用模型</label>
+              <select x-model="llmForm.SELECTED_MODEL"
+                      class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300">
+                <option value="">— 自動推薦 —</option>
+                <template x-for="m in modelList" :key="m.id">
+                  <option :value="m.id" x-text="`${m.provider} · ${m.name}`"></option>
+                </template>
+              </select>
+              <p x-show="modelList.length === 0" class="text-xs text-gray-500 mt-1">尚無可用模型 — 請先保存有效的 Gemini 或 OpenAI key</p>
+            </div>
+            <div class="flex items-center justify-between pt-2">
+              <span class="text-xs" x-show="sectionMsgs.llm.text"
+                    :class="sectionMsgs.llm.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                    x-text="sectionMsgs.llm.text"></span>
+              <button @click="saveLlmSettings()" :disabled="llmSaving"
+                      :class="llmSaving ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
+                      class="text-sm text-white px-4 py-1.5 rounded-md ml-auto">
+                <span x-show="!llmSaving">保存 LLM</span>
+                <span x-show="llmSaving">保存中…</span>
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <!-- ═════ Section 2: 分發平台 ══════════════════════════════════ -->
+        <details class="bg-white rounded-xl border shadow-sm" :open="sectionOpen.platforms" @toggle="sectionOpen.platforms = $event.target.open">
+          <summary class="px-5 py-3 cursor-pointer select-none flex items-center justify-between">
+            <span class="font-medium text-gray-800">📡 分發平台 (<span x-text="apiPlatforms.length"></span>)</span>
+            <span class="text-xs text-gray-500">
+              已連接 <span class="text-green-600 font-medium" x-text="apiPlatforms.filter(p => p.connected).length"></span>
+              / 待配置 <span class="text-orange-600 font-medium" x-text="apiPlatforms.filter(p => !p.connected).length"></span>
+            </span>
+          </summary>
+          <div class="px-5 pb-5 pt-1 space-y-2 border-t">
+            <template x-for="p in apiPlatforms" :key="p.id">
+              <div class="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <span :class="{
+                      'text-green-600': p.connected,
+                      'text-gray-400': !p.connected && p.id === 'telegraph',
+                      'text-red-500': !p.connected && p.id !== 'telegraph'
+                    }" class="text-base"
+                       x-text="p.id === 'telegraph' ? '⊙' : (p.connected ? '✓' : '✗')"></span>
+                    <span class="font-medium text-sm text-gray-800" x-text="p.name"></span>
+                    <span x-show="defaultPlatforms.includes(p.name)"
+                          class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">默認</span>
+                    <span class="text-xs text-gray-500 truncate" x-text="p.id === 'telegraph' ? '無需配置' : (p.connected ? '已配置' : p.reason)"></span>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0" x-show="p.id !== 'telegraph'">
+                    <button @click="testPlatform(p.id)" :disabled="platformTesting[p.id]"
+                            class="text-xs px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-50">
+                      <span x-show="!platformTesting[p.id]">測試</span>
+                      <span x-show="platformTesting[p.id]">…</span>
+                    </button>
+                    <button @click="togglePlatformForm(p.id)"
+                            class="text-xs px-2 py-1 border rounded hover:bg-gray-50"
+                            x-text="platformFormOpen === p.id ? '收起' : (p.connected ? '更新' : '配置')"></button>
+                  </div>
+                </div>
+                <p x-show="p.last_test_error" class="text-xs text-red-600 mt-1 ml-6" x-text="`最後錯誤：${p.last_test_error}`"></p>
+                <p x-show="p.test_timestamp" class="text-[10px] text-gray-400 mt-0.5 ml-6"
+                   x-text="`測試於 ${new Date(p.test_timestamp).toLocaleString()}`"></p>
+
+                <!-- Inline form -->
+                <div x-show="platformFormOpen === p.id" x-cloak class="mt-3 pt-3 border-t flex gap-2">
+                  <input type="password" x-model="platformKeyInput"
+                         placeholder="貼上 API key 或 token，點擊保存即時驗證"
+                         class="flex-1 border rounded px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-blue-300">
+                  <button @click="savePlatformKey(p.id)" :disabled="!platformKeyInput || platformSaving"
+                          class="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:bg-gray-300">
+                    保存
+                  </button>
+                </div>
+                <p x-show="platformFormOpen === p.id && sectionMsgs.platformKey.text" class="text-xs mt-1"
+                   :class="sectionMsgs.platformKey.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                   x-text="sectionMsgs.platformKey.text"></p>
+              </div>
+            </template>
+            <p x-show="apiPlatforms.length === 0" class="text-sm text-gray-400 text-center py-4">加載中…</p>
+          </div>
+        </details>
+
+        <!-- ═════ Section 3: 瀏覽器自動化 ═════════════════════════════ -->
+        <details class="bg-white rounded-xl border shadow-sm" :open="sectionOpen.browser" @toggle="sectionOpen.browser = $event.target.open">
+          <summary class="px-5 py-3 cursor-pointer select-none flex items-center justify-between">
+            <span class="font-medium text-gray-800">🌐 瀏覽器自動化（可選）</span>
+            <span class="text-xs"
+                  :class="browserForm.ENABLE_BROWSER_AUTOMATION === 'true' ? 'text-green-600' : 'text-gray-500'"
+                  x-text="browserForm.ENABLE_BROWSER_AUTOMATION === 'true' ? '已啟用' : '未啟用'"></span>
+          </summary>
+          <div class="px-5 pb-5 pt-1 space-y-4 border-t">
+            <label class="flex items-center gap-2">
+              <input type="checkbox"
+                     :checked="browserForm.ENABLE_BROWSER_AUTOMATION === 'true'"
+                     @change="browserForm.ENABLE_BROWSER_AUTOMATION = $event.target.checked ? 'true' : 'false'"
+                     class="w-4 h-4 rounded">
+              <span class="text-sm">啟用瀏覽器自動化</span>
+            </label>
+
+            <div :class="browserForm.ENABLE_BROWSER_AUTOMATION !== 'true' ? 'opacity-50 pointer-events-none' : ''" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">瀏覽器模式</label>
+                <select x-model="browserForm.BROWSER_AUTH_MODE"
+                        class="w-full border rounded-lg px-3 py-2 text-sm outline-none">
+                  <option value="chromium">獨立 Chromium（推薦，不影響日常瀏覽器）</option>
+                  <option value="chrome-isolated">已安裝的 Chrome（獨立 profile）</option>
+                  <option value="chrome-profile">已安裝的 Chrome（共用 profile，需關閉所有 Chrome 視窗）</option>
+                </select>
+              </div>
+
+              <div x-show="browserForm.BROWSER_AUTH_MODE === 'chrome-profile' || browserForm.BROWSER_AUTH_MODE === 'chrome-isolated'" class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">User Data Dir</label>
+                  <input x-model="browserForm.BROWSER_AUTH_CHROME_USER_DATA_DIR" type="text"
+                         placeholder="留空則用默認"
+                         class="w-full border rounded px-2 py-1 text-xs font-mono outline-none">
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">Profile Directory</label>
+                  <input x-model="browserForm.BROWSER_AUTH_CHROME_PROFILE" type="text"
+                         placeholder="如 Default 或 Profile 1"
+                         class="w-full border rounded px-2 py-1 text-xs font-mono outline-none">
+                </div>
+              </div>
+
+              <div class="border rounded-lg p-3 bg-slate-50">
+                <p class="text-sm font-medium text-gray-700 mb-2">📦 ZIP 批量導入會話</p>
+                <div class="flex items-center gap-2">
+                  <input type="file" accept=".zip" @change="zipFile = $event.target.files[0]"
+                         class="flex-1 text-xs">
+                  <button @click="importSessionsZip()" :disabled="!zipFile || zipImporting"
+                          class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 disabled:bg-gray-300">
+                    <span x-show="!zipImporting">導入</span>
+                    <span x-show="zipImporting">導入中…</span>
+                  </button>
+                </div>
+                <div x-show="zipImportResult" class="mt-2 text-xs space-y-1">
+                  <div x-show="zipImportResult?.imported?.length > 0" class="text-green-700">
+                    ✓ 導入成功：<span x-text="zipImportResult?.imported?.join(', ')"></span>
+                  </div>
+                  <template x-for="f in (zipImportResult?.failed || [])" :key="f.platform">
+                    <div class="text-red-600">✗ <span x-text="f.platform"></span>：<span x-text="f.error"></span></div>
+                  </template>
+                </div>
+              </div>
+
+              <div x-show="browserPlatforms.length > 0">
+                <p class="text-sm font-medium text-gray-700 mb-2">瀏覽器平台</p>
+                <div class="space-y-2">
+                  <template x-for="p in browserPlatforms" :key="p.id">
+                    <div class="flex items-center justify-between border rounded-lg p-2 hover:bg-gray-50">
+                      <div class="flex items-center gap-2">
+                        <span :class="p.connected ? 'text-green-600' : 'text-gray-400'"
+                              x-text="p.connected ? '✓' : '○'"></span>
+                        <span class="text-sm" x-text="p.name"></span>
+                        <span class="text-xs text-gray-500" x-text="p.connected ? '會話存在' : '未登入'"></span>
+                      </div>
+                      <div class="flex gap-1">
+                        <button @click="openBrowserLogin(p.id)"
+                                class="text-xs px-2 py-1 border rounded hover:bg-gray-50">登入</button>
+                        <button @click="testBrowserSession(p.id)" :disabled="!p.connected"
+                                class="text-xs px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-50">測試</button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <span class="text-xs" x-show="sectionMsgs.browser.text"
+                    :class="sectionMsgs.browser.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                    x-text="sectionMsgs.browser.text"></span>
+              <button @click="saveBrowserSettings()" :disabled="browserSaving"
+                      :class="browserSaving ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
+                      class="text-sm text-white px-4 py-1.5 rounded-md ml-auto">
+                <span x-show="!browserSaving">保存瀏覽器設置</span>
+                <span x-show="browserSaving">保存中…</span>
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <!-- ═════ Section 4: Sheets / 摘要 ═════════════════════════════ -->
+        <details class="bg-white rounded-xl border shadow-sm" :open="sectionOpen.infra" @toggle="sectionOpen.infra = $event.target.open">
+          <summary class="px-5 py-3 cursor-pointer select-none flex items-center justify-between">
+            <span class="font-medium text-gray-800">📊 Google Sheets / 摘要</span>
+            <span class="text-xs text-gray-500" x-text="settingsRaw.GOOGLE_SHEET_ID ? '已配置' : '未配置'"></span>
+          </summary>
+          <div class="px-5 pb-5 pt-1 space-y-4 border-t">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Google Sheet ID</label>
+              <input x-model="infraForm.GOOGLE_SHEET_ID" type="text"
+                     :placeholder="settingsRaw.GOOGLE_SHEET_ID || '貼上 Sheet ID'"
+                     class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-blue-300">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Service Account JSON</label>
+              <textarea x-model="infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON" rows="4"
+                     :placeholder="settingsRaw.GOOGLE_APPLICATION_CREDENTIALS_JSON ? '當前已配置（粘贴新 JSON 覆盖；留空保留）' : '粘贴整段 service account JSON'"
+                     class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-blue-300"></textarea>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                日報發件地址 <span class="text-xs font-normal text-gray-400">（DIGEST_SENDER_EMAIL）</span>
+              </label>
+              <input x-model="infraForm.DIGEST_SENDER_EMAIL" type="email"
+                     :placeholder="settingsRaw.DIGEST_SENDER_EMAIL || 'sender@yourdomain.com'"
+                     class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300">
+              <p class="text-xs text-gray-400 mt-1">Service Account 將以此 Workspace 帳號身份發信（需開啟 Domain-wide Delegation + gmail.send 授權）</p>
+            </div>
+            <p class="text-xs text-gray-500">
+              💡 日終 digest 渠道（email / Telegram）在
+              <a href="#" @click.prevent="switchView('brand')" class="text-blue-600 underline">品牌資料庫</a>
+              中配置。
+            </p>
+            <div class="flex items-center justify-between pt-2">
+              <span class="text-xs" x-show="sectionMsgs.infra.text"
+                    :class="sectionMsgs.infra.kind === 'ok' ? 'text-green-600' : 'text-red-600'"
+                    x-text="sectionMsgs.infra.text"></span>
+              <button @click="saveInfraSettings()" :disabled="infraSaving"
+                      :class="infraSaving ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
+                      class="text-sm text-white px-4 py-1.5 rounded-md ml-auto">
+                <span x-show="!infraSaving">保存</span>
+                <span x-show="infraSaving">保存中…</span>
+              </button>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+  </div><!-- /overflow-y-auto -->
+</main>
 
 <script>
-  // 简化的导航切换逻辑
-  const tabs = [
-    { id: 'navPublish', view: 'viewPublish' },
-    { id: 'navHistory', view: 'viewHistory' },
-    { id: 'navSettings', view: 'viewSettings' },
-    { id: 'navPrompts', view: 'viewPrompts' }
-  ];
+function syndicatorApp() {
+  return {
+    // ── Navigation ─────────────────────────────────────
+    view: 'publish',
+    phase: 'input', // 'input' | 'preview'
+    navItems: [
+      { id: 'publish', icon: '✍️', label: '文章發佈' },
+      { id: 'queue',   icon: '📋', label: '佇列狀態' },
+      { id: 'brand',   icon: '🏷️', label: '品牌資料庫' },
+      { id: 'history', icon: '📂', label: '發佈歷史' },
+      { id: 'settings',icon: '⚙️', label: '系統設置' },
+    ],
 
-  function setActive(tabIdx) {
-    document.querySelectorAll('[id^=nav]').forEach(t => t.classList.remove('text-blue-600', 'border-blue-600'));
-    document.querySelectorAll('[id^=view]').forEach(v => v.classList.add('hidden'));
-    tabs[tabIdx].el.classList.add('text-blue-600', 'border-blue-600');
-    document.getElementById(tabs[tabIdx].view).classList.remove('hidden');
-  }
+    get currentTitle() {
+      if (this.view === 'publish') return this.phase === 'input' ? '文章發佈' : `7 平台預覽 — ${this.batchId || ''}`;
+      return this.navItems.find(n => n.id === this.view)?.label ?? '';
+    },
 
-  document.querySelectorAll('[id^=nav]').forEach((el, i) => {
-    el.addEventListener('click', () => setActive(i));
-  });
-  setActive(0); // 默认文章发布
+    // ── Brand ──────────────────────────────────────────
+    brandReady: false,
+    brandProfile: null,
+    brandForm: { name: '', nameVariants: '', targetUrls: '', blocklist: '', anchorBlocklist: '', digestChannel: 'none', digestDestination: '' },
+    publishError: '',   // inline error for regenerate / dispatch failures (replaces alert())
+    brandSaveMsg: '',
 
-  // 动态加载平台复选框
-  async function loadPlatforms() {
-    const res = await fetch('/api/platforms');
-    const data = await res.json();
-    const container = document.getElementById('platformCheckboxes');
-    container.innerHTML = data.platforms.map(p => {
-      const checked = (data.defaults || []).includes(p.name) ? 'checked' : '';
-      return `
-        <label class="flex items-center gap-2">
-          <input type="checkbox" name="platforms" value="${p.name}" ${checked} class="mt-1 rounded text-blue-600 focus:ring-blue-500" />
-          <span class="font-semibold text-blue-800">${p.name}</span>
-        </label>`;
-    }).join('');
-  }
-  loadPlatforms();
+    // ── Input phase ────────────────────────────────────
+    draft: '',
+    draftTitle: '',
+    targetUrlOverride: '',
+    draftCharCount: 0,
+    generating: false,
+    generatingStep: '',
+    generateError: '',
 
-  // 实时预览
-  function updatePreview() {
-    const content = document.getElementById('contentInput').value || '';
-    const html = marked.parse(content);
-    document.getElementById('markdownPreview').innerHTML = html;
-  }
-  updatePreview();
+    // ── Preview phase ──────────────────────────────────
+    batchId: null,
+    variants: [],
+    lintResult: null,
+    activeTab: 0,
+    skippedPlatforms: new Set(),
+    regenLoading: -1,
+    dispatching: false,
 
-  // 表单保存
-  document.getElementById('generateBtn').addEventListener('click', async () => {
-    const title = document.getElementById('titleInput').value.trim();
-    const content = document.getElementById('contentInput').value.trim();
-    if(!title||!content) return alert('请填写标题和正文');
-    // 这里可以调用后端接口生成
-    alert('内容生成逻辑待接入后端 API');
-  });
+    get lintHasBatchViolation() {
+      return !!this.lintResult?.batchViolation;
+    },
+    get lintHasVariantViolations() {
+      // Only count violations for active (non-skipped, status=ok) variants
+      const violations = this.lintResult?.variantViolations || {};
+      return Object.keys(violations).some(
+        p => !this.skippedPlatforms.has(p) &&
+             this.variants.some(v => v.platform === p && v.generation_status === 'ok')
+      );
+    },
+    get hasNakedUrlVariants() {
+      // True when any active variant's anchor generation fell back to bare URL
+      return this.variants.some(v =>
+        v.generation_status === 'ok' &&
+        !this.skippedPlatforms.has(v.platform) &&
+        v.anchor_words?.includes('__naked_url__')
+      );
+    },
+    get canDispatch() {
+      if (this.lintHasBatchViolation) return false;
+      if (this.lintHasVariantViolations) return false;  // per-variant exposure violations also block
+      if (this.hasNakedUrlVariants) return false;       // naked-URL anchor fallback blocks too
+      return this.variants.some(v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform));
+    },
+    get activeVariantCount() {
+      return this.variants.filter(v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform)).length;
+    },
 
-  // 自动发布
-  document.getElementById('autoPublishBtn').addEventListener('click', async () => {
-    const platforms = Array.from(document.querySelectorAll('#platformCheckboxes input[name="platforms"]:checked')).map(cb=>cb.value);
-    if(platforms.length===0) return alert('请选择至少一个平台');
-    const status = document.querySelector('input[name="publishStatus"]:checked').value;
-    alert(`即将向 ${platforms.join(',')} 发布（${status}）`);
-  });
+    // ── Queue ──────────────────────────────────────────
+    queueJobs: [],
+    queueTimer: null,
+    get pendingCount() {
+      return this.queueJobs.filter(j => ['scheduled', 'running', 'failed_retryable'].includes(j.status)).length;
+    },
 
-  // 表单自动更新选中状态
-  window.addEventListener('load', () => {
-    document.getElementById('titleInput').addEventListener('input', updatePreview);
-    document.getElementById('contentInput').addEventListener('input', updatePreview);
-    document.getElementById('tagsInput').addEventListener('input', updatePreview);
-    document.getElementById('excerptInput').addEventListener('input', updatePreview);
-  });
+    // ── History ────────────────────────────────────────
+    historyItems: [],
+
+    // ── Settings (4 sections) ──────────────────────────
+    settingsRaw: {},
+    settingsToast: { text: '', kind: 'ok' },
+    sectionOpen: { llm: false, platforms: false, browser: false, infra: false },
+    isSavingAny: false,
+    // Section messages — unified { text, kind } state for all 4 sections
+    sectionMsgs: { llm: { text: '', kind: 'ok' }, browser: { text: '', kind: 'ok' }, infra: { text: '', kind: 'ok' }, platformKey: { text: '', kind: 'ok' } },
+    // LLM section
+    llmForm: { GEMINI_API_KEY: '', OPENAI_API_KEY: '', SELECTED_MODEL: '' },
+    llmSaving: false,
+    modelList: [],
+    // Platforms section
+    platformsCache: null,
+    platformsCacheTime: 0,
+    platformsLoading: false,
+    defaultPlatforms: [],
+    platformFormOpen: null,
+    platformKeyInput: '',
+    platformTesting: {},
+    platformSaving: false,
+    batchValidating: false,
+    // Browser section
+    browserForm: {
+      ENABLE_BROWSER_AUTOMATION: 'false',
+      BROWSER_AUTH_MODE: 'chromium',
+      BROWSER_AUTH_CHROME_USER_DATA_DIR: '',
+      BROWSER_AUTH_CHROME_PROFILE: '',
+    },
+    browserSaving: false,
+    zipFile: null,
+    zipImporting: false,
+    zipImportResult: null,
+    // Infra section
+    infraForm: { GOOGLE_SHEET_ID: '', GOOGLE_APPLICATION_CREDENTIALS_JSON: '', DIGEST_SENDER_EMAIL: '' },
+    infraSaving: false,
+
+    get apiPlatforms() {
+      return (this.platformsCache?.platforms || []).filter(p => !p.browserAutomation);
+    },
+    get browserPlatforms() {
+      return (this.platformsCache?.platforms || []).filter(p => p.browserAutomation);
+    },
+
+    // ── Lifecycle ──────────────────────────────────────
+    async init() {
+      await this.loadBrandProfile();
+      this.switchView('publish');
+    },
+
+    switchView(id) {
+      // Clear stale settings save messages so users don't see old toasts on return
+      if (this.view === 'settings' && id !== 'settings') {
+        Object.keys(this.sectionMsgs).forEach(k => { this.sectionMsgs[k] = { text: '', kind: 'ok' }; });
+      }
+      this.view = id;
+      if (id === 'queue')   { this.loadQueue(); this.startQueuePolling(); } else { this.stopQueuePolling(); }
+      if (id === 'history') this.loadHistory();
+      if (id === 'settings'){ this.loadSettings(); this.loadPlatforms(); this.loadModels(); }
+      if (id === 'brand')   this.loadBrandForm();
+    },
+
+    // ── Generate ───────────────────────────────────────
+    async generate() {
+      this.generating = true;
+      this.generateError = '';
+      this.generatingStep = '正在生成變體...';
+      try {
+        const body = { draft: this.draft, title: this.draftTitle || undefined };
+        if (this.targetUrlOverride) body.target_url_override = this.targetUrlOverride;
+        const res = await fetch('/api/v2/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '生成失敗');
+        this.batchId = data.batchId;
+        this.variants = data.variants;
+        this.lintResult = data.lintResult;
+        this.skippedPlatforms = new Set();
+        this.activeTab = 0;
+        this.phase = 'preview';
+      } catch (e) {
+        this.generateError = e.message;
+      } finally {
+        this.generating = false;
+        this.generatingStep = '';
+      }
+    },
+
+    // ── Regenerate single tab ──────────────────────────
+    async regenerateTab(idx) {
+      const platform = this.variants[idx]?.platform;
+      if (!platform) return;
+      this.regenLoading = idx;
+      this.publishError = '';
+      try {
+        // Send the current siblings so the backend can run full Jaccard lint
+        // against the whole batch (not just clear this platform's violation).
+        const siblings = this.variants.filter(v => v.platform !== platform);
+        const res = await fetch('/api/v2/regenerate-variant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: this.batchId, platform, draft: this.draft, siblings }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        this.variants[idx] = data.variant;
+        // Apply the full lint result from the backend (includes fresh Jaccard).
+        if (data.lintResult) this.lintResult = data.lintResult;
+      } catch (e) {
+        this.publishError = `重新生成失敗：${e.message}`;
+      } finally {
+        this.regenLoading = -1;
+      }
+    },
+
+    toggleSkip(idx) {
+      const platform = this.variants[idx]?.platform;
+      if (!platform) return;
+      if (this.skippedPlatforms.has(platform)) {
+        this.skippedPlatforms.delete(platform);
+      } else {
+        this.skippedPlatforms.add(platform);
+      }
+      // trigger reactivity
+      this.skippedPlatforms = new Set(this.skippedPlatforms);
+    },
+
+    // ── Dispatch ───────────────────────────────────────
+    async dispatch() {
+      this.dispatching = true;
+      this.publishError = '';
+      try {
+        const activeVariants = this.variants.filter(
+          v => v.generation_status === 'ok' && !this.skippedPlatforms.has(v.platform)
+        );
+        // Frontend guard (canDispatch already blocks the button; this catches race conditions)
+        const nakedPlatforms = activeVariants
+          .filter(v => v.anchor_words?.includes('__naked_url__'))
+          .map(v => v.platform);
+        if (nakedPlatforms.length > 0) {
+          this.publishError = `無法發佈：${nakedPlatforms.join('、')} 的錨詞生成失敗，請重新生成後再發佈`;
+          return;
+        }
+        const res = await fetch('/api/v2/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: this.batchId, variants: activeVariants }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        // Show queue
+        this.switchView('queue');
+        this.phase = 'input';
+        this.draft = '';
+        this.draftTitle = '';
+        this.draftCharCount = 0;
+      } catch (e) {
+        this.publishError = `發佈失敗：${e.message}`;
+      } finally {
+        this.dispatching = false;
+      }
+    },
+
+    // ── Queue polling ──────────────────────────────────
+    async loadQueue() {
+      try {
+        const res = await fetch('/api/v2/queue');
+        const data = await res.json();
+        this.queueJobs = data.jobs;
+      } catch (e) { console.warn('[loadQueue]', e); }
+    },
+    startQueuePolling() {
+      this.stopQueuePolling();
+      this.queueTimer = setInterval(() => this.loadQueue(), 5000);
+    },
+    stopQueuePolling() {
+      if (this.queueTimer) { clearInterval(this.queueTimer); this.queueTimer = null; }
+    },
+
+    // ── Brand ──────────────────────────────────────────
+    async loadBrandProfile() {
+      try {
+        const res = await fetch('/api/v2/brand-profile');
+        const data = await res.json();
+        this.brandReady = data.dispatchReady;
+        this.brandProfile = data.profile;
+      } catch (e) { console.warn('[loadBrandProfile]', e); }
+    },
+    loadBrandForm() {
+      const p = this.brandProfile;
+      if (!p) return;
+      this.brandForm = {
+        name: p.name || '',
+        nameVariants: (p.name_variants || []).join(', '),
+        targetUrls: (p.target_urls || []).map(t => `${t.url} ${t.context_tag}`).join('\n'),
+        blocklist: (p.exposure_blocklist || []).join('\n'),
+        anchorBlocklist: (p.anchor_blocklist || []).join('\n'),
+        digestChannel: p.digest_channel || 'none',
+        digestDestination: p.digest_destination || '',
+      };
+    },
+    async saveBrand() {
+      this.brandSaveMsg = '';
+      const payload = {
+        name: this.brandForm.name.trim(),
+        name_variants: this.brandForm.nameVariants.split(',').map(s => s.trim()).filter(Boolean),
+        target_urls: this.brandForm.targetUrls.split('\n').filter(Boolean).map(line => {
+          const [url, ...tags] = line.trim().split(/\s+/);
+          return { url, context_tag: tags.join(' ') || 'home' };
+        }),
+        exposure_blocklist: this.brandForm.blocklist.split('\n').map(s => s.trim()).filter(Boolean),
+        anchor_blocklist: this.brandForm.anchorBlocklist.split('\n').map(s => s.trim()).filter(Boolean),
+        digest_channel: this.brandForm.digestChannel,
+        digest_destination: this.brandForm.digestDestination.trim() || null,
+      };
+      try {
+        const res = await fetch('/api/v2/brand-profile', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        this.brandSaveMsg = '✓ 保存成功';
+        await this.loadBrandProfile();
+      } catch (e) {
+        this.brandSaveMsg = `✗ 保存失敗: ${e.message}`;
+      }
+    },
+
+    // ── History ────────────────────────────────────────
+    async loadHistory() {
+      try {
+        const res = await fetch('/api/history');
+        this.historyItems = await res.json();
+      } catch (e) { console.warn('[loadHistory]', e); }
+    },
+
+    // ── Settings: shared loaders ───────────────────────
+    async loadSettings() {
+      try {
+        const data = await this.fetchJson('/api/settings', {}, 15000);
+        delete data.AUTH_STATUS;
+        this.settingsRaw = data;
+        // Seed browser & infra forms with current values (LLM stays empty until user types)
+        this.browserForm.ENABLE_BROWSER_AUTOMATION = data.ENABLE_BROWSER_AUTOMATION || 'false';
+        this.browserForm.BROWSER_AUTH_MODE = data.BROWSER_AUTH_MODE || 'chromium';
+        this.browserForm.BROWSER_AUTH_CHROME_USER_DATA_DIR = data.BROWSER_AUTH_CHROME_USER_DATA_DIR || '';
+        this.browserForm.BROWSER_AUTH_CHROME_PROFILE = data.BROWSER_AUTH_CHROME_PROFILE || '';
+        this.infraForm.GOOGLE_SHEET_ID = data.GOOGLE_SHEET_ID || '';
+        this.infraForm.DIGEST_SENDER_EMAIL = data.DIGEST_SENDER_EMAIL || '';
+        // service account JSON not pre-filled (sensitive)
+        this.llmForm.SELECTED_MODEL = data.SELECTED_MODEL || '';
+      } catch (e) {
+        this.flashToast('加載設置失敗：' + e.message, 'err');
+      }
+    },
+
+    async loadPlatforms(force = false) {
+      const now = Date.now();
+      if (!force && this.platformsCache && now - this.platformsCacheTime < 10000) return;
+      if (this.platformsLoading) return;
+      this.platformsLoading = true;
+      try {
+        const data = await this.fetchJson('/api/platforms', {}, 15000);
+        this.platformsCache = data;
+        this.platformsCacheTime = now;
+        this.defaultPlatforms = data.defaults || [];
+      } catch (e) {
+        this.flashToast('加載平台失敗：' + e.message, 'err');
+      } finally {
+        this.platformsLoading = false;
+      }
+    },
+
+    async loadModels() {
+      try {
+        const data = await this.fetchJson('/api/models', {}, 20000);
+        this.modelList = data.models || [];
+        if (!this.llmForm.SELECTED_MODEL && data.selected) this.llmForm.SELECTED_MODEL = data.selected;
+      } catch (e) {
+        this.modelList = [];
+      }
+    },
+
+    flashToast(text, kind = 'ok') {
+      this.settingsToast = { text, kind };
+      setTimeout(() => { if (this.settingsToast.text === text) this.settingsToast = { text: '', kind }; }, 3500);
+    },
+
+    // Set a section-level inline message (replaces separate llmSaveMsg/browserSaveMsg/etc. vars).
+    setMsg(section, text, kind = 'ok') {
+      this.sectionMsgs[section] = { text, kind };
+    },
+
+    // Universal fetch wrapper with AbortController timeout + auto JSON encode/decode.
+    // Throws Error with .message ready for UI display. Handles FormData (no auto-encode).
+    async fetchJson(url, opts = {}, timeoutMs = 20000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const init = { ...opts, signal: controller.signal };
+        if (init.body && !(init.body instanceof FormData) && typeof init.body === 'object') {
+          init.headers = { 'Content-Type': 'application/json', ...(init.headers || {}) };
+          init.body = JSON.stringify(init.body);
+        }
+        const res = await fetch(url, init);
+        let data = null;
+        try { data = await res.json(); } catch (_) {}
+        if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+        return data;
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error(`請求超時（${timeoutMs / 1000}s）`);
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
+    // Section save helper: global concurrency guard + section flag + uniform error handling.
+    // Returns true on success, false on failure. Caller handles post-success cleanup (clearing inputs).
+    async saveSection({ flagKey, msgSection, payload, url = '/api/settings', method = 'POST', refresh = [], successMsg = '✓ 已保存' }) {
+      if (this.isSavingAny) {
+        this.setMsg(msgSection, '✗ 另一個保存進行中，請稍候再試', 'err');
+        return false;
+      }
+      this.isSavingAny = true;
+      this[flagKey] = true;
+      this.setMsg(msgSection, '');
+      try {
+        await this.fetchJson(url, { method, body: payload }, 30000);
+        for (const fn of refresh) await fn.call(this);
+        this.setMsg(msgSection, typeof successMsg === 'function' ? successMsg.call(this) : successMsg, 'ok');
+        return true;
+      } catch (e) {
+        this.setMsg(msgSection, `✗ ${e.message}`, 'err');
+        return false;
+      } finally {
+        this[flagKey] = false;
+        this.isSavingAny = false;
+      }
+    },
+
+    // ── Settings: LLM section ──────────────────────────
+    async saveLlmSettings() {
+      const payload = {};
+      if (this.llmForm.GEMINI_API_KEY.trim()) payload.GEMINI_API_KEY = this.llmForm.GEMINI_API_KEY.trim();
+      if (this.llmForm.OPENAI_API_KEY.trim()) payload.OPENAI_API_KEY = this.llmForm.OPENAI_API_KEY.trim();
+      if (this.llmForm.SELECTED_MODEL) payload.SELECTED_MODEL = this.llmForm.SELECTED_MODEL;
+      const ok = await this.saveSection({
+        flagKey: 'llmSaving',
+        msgSection: 'llm',
+        payload,
+        refresh: [this.loadSettings, this.loadModels, this.loadBrandProfile],
+        successMsg() { return `✓ 已保存（${this.modelList.length} 個模型可用）`; },
+      });
+      if (ok) { this.llmForm.GEMINI_API_KEY = ''; this.llmForm.OPENAI_API_KEY = ''; }
+    },
+
+    // ── Settings: Platforms section ────────────────────
+    togglePlatformForm(id) {
+      this.platformFormOpen = this.platformFormOpen === id ? null : id;
+      this.platformKeyInput = '';
+      this.setMsg('platformKey', '');
+    },
+
+    async testPlatform(id) {
+      this.platformTesting = { ...this.platformTesting, [id]: true };
+      try {
+        const data = await this.fetchJson(`/api/auth/test-connection/${id}`, { method: 'POST' }, 20000);
+        this.flashToast(data.ok ? `✓ ${id} 連接正常` : `✗ ${id}：${data.error || '驗證失敗'}`, data.ok ? 'ok' : 'err');
+        await this.loadPlatforms(true);
+      } catch (e) {
+        this.flashToast(`✗ ${id} 測試出錯：${e.message}`, 'err');
+      } finally {
+        this.platformTesting = { ...this.platformTesting, [id]: false };
+      }
+    },
+
+    async savePlatformKey(id) {
+      const apiKey = this.platformKeyInput.trim();
+      if (!apiKey) return;
+      if (this.isSavingAny) {
+        this.setMsg('platformKey', '✗ 另一個保存進行中，請稍候再試', 'err');
+        return;
+      }
+      this.isSavingAny = true;
+      this.platformSaving = true;
+      this.setMsg('platformKey', '保存並驗證中…', 'ok');
+      try {
+        await this.fetchJson(`/api/platforms/${id}/api-key`, { method: 'PATCH', body: { apiKey } }, 30000);
+        this.setMsg('platformKey', '✓ 密鑰已驗證並保存', 'ok');
+        this.platformKeyInput = '';
+        setTimeout(() => { this.platformFormOpen = null; }, 800);
+        await this.loadPlatforms(true);
+        await this.loadBrandProfile();
+      } catch (e) {
+        this.setMsg('platformKey', `✗ ${e.message}`, 'err');
+      } finally {
+        this.platformSaving = false;
+        this.isSavingAny = false;
+      }
+    },
+
+    async batchValidatePlatforms() {
+      this.batchValidating = true;
+      try {
+        await this.fetchJson('/api/platforms/batch-validate', { method: 'POST' }, 60000);
+        await this.loadPlatforms(true);
+        this.flashToast('✓ 全部平台已重新測試', 'ok');
+      } catch (e) {
+        this.flashToast(`✗ 批量測試失敗：${e.message}`, 'err');
+      } finally {
+        this.batchValidating = false;
+      }
+    },
+
+    // ── Settings: Browser section ──────────────────────
+    async saveBrowserSettings() {
+      await this.saveSection({
+        flagKey: 'browserSaving',
+        msgSection: 'browser',
+        payload: {
+          ENABLE_BROWSER_AUTOMATION: this.browserForm.ENABLE_BROWSER_AUTOMATION,
+          BROWSER_AUTH_MODE: this.browserForm.BROWSER_AUTH_MODE,
+          BROWSER_AUTH_CHROME_USER_DATA_DIR: this.browserForm.BROWSER_AUTH_CHROME_USER_DATA_DIR,
+          BROWSER_AUTH_CHROME_PROFILE: this.browserForm.BROWSER_AUTH_CHROME_PROFILE,
+        },
+        refresh: [this.loadSettings, () => this.loadPlatforms(true), this.loadBrandProfile],
+      });
+    },
+
+    async importSessionsZip() {
+      if (!this.zipFile) return;
+      this.zipImporting = true;
+      this.zipImportResult = null;
+      try {
+        const fd = new FormData();
+        fd.append('file', this.zipFile);
+        const data = await this.fetchJson('/api/auth/import-sessions', { method: 'POST', body: fd }, 90000);
+        this.zipImportResult = data;
+        this.zipFile = null;
+        await this.loadPlatforms(true);
+        await this.loadBrandProfile();
+      } catch (e) {
+        this.zipImportResult = { imported: [], failed: [{ platform: '(整體)', error: e.message }] };
+      } finally {
+        this.zipImporting = false;
+      }
+    },
+
+    async openBrowserLogin(platformId) {
+      try {
+        const data = await this.fetchJson('/api/auth/browser', { method: 'POST', body: { platform: platformId } }, 30000);
+        this.flashToast(data.message || `已打開 ${platformId} 登入窗口，登入後關閉即可保存`, 'ok');
+      } catch (e) {
+        this.flashToast(`✗ ${e.message}`, 'err');
+      }
+    },
+
+    async testBrowserSession(platformId) {
+      try {
+        const data = await this.fetchJson('/api/auth/test', { method: 'POST', body: { platform: platformId } }, 30000);
+        this.flashToast(data.message || `已打開 ${platformId} 測試窗口`, 'ok');
+      } catch (e) {
+        this.flashToast(`✗ ${e.message}`, 'err');
+      }
+    },
+
+    // ── Settings: Infra section ────────────────────────
+    async saveInfraSettings() {
+      const payload = {};
+      if (this.infraForm.GOOGLE_SHEET_ID.trim()) payload.GOOGLE_SHEET_ID = this.infraForm.GOOGLE_SHEET_ID.trim();
+      if (this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON.trim()) {
+        payload.GOOGLE_APPLICATION_CREDENTIALS_JSON = this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON.trim();
+      }
+      if (this.infraForm.DIGEST_SENDER_EMAIL.trim()) payload.DIGEST_SENDER_EMAIL = this.infraForm.DIGEST_SENDER_EMAIL.trim();
+      const ok = await this.saveSection({
+        flagKey: 'infraSaving',
+        msgSection: 'infra',
+        payload,
+        refresh: [this.loadSettings, this.loadBrandProfile],
+      });
+      if (ok) this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON = '';
+    },
+  };
+}
 </script>
 </body>
 </html>

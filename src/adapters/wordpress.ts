@@ -1,5 +1,4 @@
-import { PlatformAdapter, PublishResult, PublishOptions } from './base';
-import { logger } from '../utils/logger';
+import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
 
 function escapeHtml(input: string) {
   return input
@@ -10,56 +9,35 @@ function escapeHtml(input: string) {
     .replace(/'/g, '&#039;');
 }
 
-function markdownToHtml(markdown: string, originalUrl?: string) {
+function markdownToHtml(markdown: string, originalUrl?: string): string {
   const html: string[] = [];
   let paragraph: string[] = [];
 
-  const flushParagraph = () => {
+  const flush = () => {
     const text = paragraph.join(' ').trim();
     if (text) html.push(`<p>${escapeHtml(text)}</p>`);
     paragraph = [];
   };
 
   for (const line of markdown.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      flushParagraph();
-      continue;
-    }
+    const t = line.trim();
+    if (!t) { flush(); continue; }
 
-    const image = trimmed.match(/^!\[([^\]]*)]\((https?:\/\/[^)]+)\)$/);
-    if (image) {
-      flushParagraph();
-      html.push(`<figure><img src="${escapeHtml(image[2])}" alt="${escapeHtml(image[1])}" /></figure>`);
-      continue;
-    }
+    const image = t.match(/^!\[([^\]]*)]\((https?:\/\/[^)]+)\)$/);
+    if (image) { flush(); html.push(`<figure><img src="${escapeHtml(image[2])}" alt="${escapeHtml(image[1])}" /></figure>`); continue; }
 
-    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      const level = Math.min(heading[1].length + 1, 4);
-      html.push(`<h${level}>${escapeHtml(heading[2])}</h${level}>`);
-      continue;
-    }
+    const heading = t.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) { flush(); const lvl = Math.min(heading[1].length + 1, 4); html.push(`<h${lvl}>${escapeHtml(heading[2])}</h${lvl}>`); continue; }
 
-    const quote = trimmed.match(/^>\s*(.+)$/);
-    if (quote) {
-      flushParagraph();
-      html.push(`<blockquote>${escapeHtml(quote[1])}</blockquote>`);
-      continue;
-    }
+    const quote = t.match(/^>\s*(.+)$/);
+    if (quote) { flush(); html.push(`<blockquote>${escapeHtml(quote[1])}</blockquote>`); continue; }
 
-    const listItem = trimmed.match(/^[-*]\s+(.+)$/);
-    if (listItem) {
-      flushParagraph();
-      html.push(`<p>&bull; ${escapeHtml(listItem[1])}</p>`);
-      continue;
-    }
+    const li = t.match(/^[-*]\s+(.+)$/);
+    if (li) { flush(); html.push(`<p>&bull; ${escapeHtml(li[1])}</p>`); continue; }
 
-    paragraph.push(trimmed);
+    paragraph.push(t);
   }
-
-  flushParagraph();
+  flush();
 
   if (originalUrl) {
     html.push(`<hr /><p><em>Originally published at: <a href="${escapeHtml(originalUrl)}">${escapeHtml(originalUrl)}</a></em></p>`);
@@ -68,63 +46,64 @@ function markdownToHtml(markdown: string, originalUrl?: string) {
   return html.join('\n');
 }
 
-export class WordPressAdapter implements PlatformAdapter {
+export class WordPressAdapter extends BaseAdapter {
   name = 'WordPress';
   canPublishAutomatically = true;
+
+  async testConnection(): Promise<TestConnectionResult> {
+    const siteUrl = process.env.WORDPRESS_SITE_URL?.replace(/\/+$/, '');
+    const username = process.env.WORDPRESS_USERNAME;
+    const appPassword = process.env.WORDPRESS_APP_PASSWORD;
+    if (!siteUrl || !username || !appPassword) {
+      return { ok: false, error: 'WORDPRESS_SITE_URL, WORDPRESS_USERNAME, or WORDPRESS_APP_PASSWORD not configured' };
+    }
+
+    try {
+      const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
+      const response = await fetch(`${siteUrl}/wp-json/wp/v2/users/me`, {
+        headers: { Authorization: `Basic ${auth}` },
+      });
+
+      if (!response.ok) {
+        return { ok: false, error: `${response.status} ${response.statusText}` };
+      }
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, error: `Network error: ${error.message}` };
+    }
+  }
 
   async publish(options: PublishOptions): Promise<PublishResult> {
     const siteUrl = process.env.WORDPRESS_SITE_URL?.replace(/\/+$/, '');
     const username = process.env.WORDPRESS_USERNAME;
     const appPassword = process.env.WORDPRESS_APP_PASSWORD;
-
     if (!siteUrl || !username || !appPassword) {
-      return {
-        platform: this.name,
-        success: false,
-        error: 'WORDPRESS_SITE_URL, WORDPRESS_USERNAME, or WORDPRESS_APP_PASSWORD is not configured in .env'
-      };
+      return this.missingEnv('WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD');
     }
 
     try {
       const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
       const response = await fetch(`${siteUrl}/wp-json/wp/v2/posts`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: options.title,
           content: markdownToHtml(options.markdownContent, options.originalUrl),
           status: options.publishStatus === 'public' ? 'publish' : 'draft',
-          excerpt: options.excerpt || undefined
-        })
+          excerpt: options.excerpt || undefined,
+        }),
       });
 
       const text = await response.text();
       let data: any = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        throw new Error(`WordPress returned a non-JSON response (${response.status}): ${text.substring(0, 160)}`);
+      try { data = text ? JSON.parse(text) : {}; } catch {
+        throw new Error(`WordPress returned non-JSON (${response.status}): ${text.substring(0, 160)}`);
       }
 
-      if (!response.ok) {
-        throw new Error(data.message || `WordPress API returned HTTP ${response.status}`);
-      }
-
-      return {
-        platform: this.name,
-        success: true,
-        publishedUrl: data.link || `${siteUrl}/wp-admin/post.php?post=${data.id}&action=edit`
-      };
+      if (!response.ok) throw new Error(data.message || `WordPress API returned HTTP ${response.status}`);
+      return this.ok(data.link || `${siteUrl}/wp-admin/post.php?post=${data.id}&action=edit`);
     } catch (error: any) {
-      logger.error(`[${this.name}] Publish failed`, error);
-      return {
-        platform: this.name,
-        success: false,
-        error: error.message
-      };
+      return this.fail(error);
     }
   }
 }

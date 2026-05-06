@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
 import fs from 'fs/promises';
 import path from 'path';
@@ -6,9 +6,9 @@ import crypto from 'crypto';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
 import { logger } from '../utils/logger';
-import { getBrowser } from '../utils/browserManager';
+import { getBrowser, acquirePage, releasePage } from '../utils/browserManager';
 
-const execPromise = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
 
 export interface ScrapedData {
   title: string;
@@ -73,7 +73,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
   });
-  const page = await context.newPage();
+  const page = await acquirePage(context);
   page.setDefaultNavigationTimeout(45000);
   page.setDefaultTimeout(15000);
   
@@ -125,11 +125,26 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
     await fs.writeFile(tempHtmlPath, htmlToProcess, 'utf-8');
     
     // 4. Run the Python markitdown CLI command on the HTML file
-    const { stdout } = await execPromise(`markitdown "${tempHtmlPath}"`, { maxBuffer: 1024 * 1024 * 50 }); // 50MB buffer
-    
+    let stdout: string;
+    try {
+      const result = await execFileAsync('markitdown', [tempHtmlPath], {
+        maxBuffer: 1024 * 1024 * 50, // 50MB buffer
+        timeout: 30_000,             // 30s max — prevents hangs on large HTML
+      });
+      stdout = result.stdout;
+    } catch (execErr: any) {
+      if (execErr.killed) {
+        logger.warn('markitdown timed out after 30s — returning empty markdown');
+        stdout = '';
+      } else {
+        throw execErr;
+      }
+    }
+
     let markdownContent = stdout.trim();
     if (!markdownContent || markdownContent.length === 0) {
-      throw new Error('markitdown returned empty output on HTML.');
+      // Return empty string on timeout or empty output — callers degrade gracefully
+      markdownContent = '';
     }
     
     // Attempt to extract title from markitdown output if Readability didn't find one
@@ -149,6 +164,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
     logger.error('Scraping or markitdown execution failed', error);
     throw new Error(`Failed to extract and clean article content: ${error.message}`);
   } finally {
+    await releasePage(page).catch(() => {});
     await context.close();
     // 5. Cleanup temporary file
     try {

@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>品牌资料库 — 第三方口吻外链分发工具 v0.2</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .field-error { color: #b91c1c; font-size: 0.875rem; margin-top: 0.25rem; }
+    textarea { font-family: "JetBrains Mono", "Menlo", monospace; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<div class="max-w-3xl mx-auto px-6 py-8">
+  <header class="mb-8">
+    <h1 class="text-2xl font-semibold mb-1">品牌资料库</h1>
+    <p class="text-slate-500 text-sm">单租户单主站。本页改动立即生效，无需重启服务。</p>
+  </header>
+
+  <div id="status-banner" class="hidden mb-6 px-4 py-3 rounded-lg text-sm"></div>
+
+  <form id="brand-form" class="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+
+    <!-- Required fields -->
+    <fieldset class="space-y-4">
+      <legend class="text-base font-semibold text-slate-700">必填字段（R3 前置闸）</legend>
+
+      <div>
+        <label class="block text-sm font-medium mb-1" for="name">品牌主名 *</label>
+        <input id="name" name="name" type="text" required
+               class="w-full border border-slate-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-300" />
+        <div class="field-error" data-error-for="name"></div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">默认目标页清单 *（每行一个，格式 <code>https://url 标签</code>）</label>
+        <textarea id="target_urls" name="target_urls" rows="4"
+                  placeholder="https://example.com home&#10;https://example.com/product product:main&#10;https://example.com/campaign campaign:summer"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+        <p class="text-xs text-slate-500 mt-1">每行 <code>URL 空格 标签</code>，标签是 LLM 选页的语境提示（如 home、product:xyz）</p>
+        <div class="field-error" data-error-for="target_urls"></div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">身份暴露禁用词列表 *（每行一条，至少 5 条）</label>
+        <textarea id="exposure_blocklist" name="exposure_blocklist" rows="6"
+                  placeholder="作为我们&#10;本品牌&#10;我们的产品&#10;敝公司&#10;官方推荐"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+        <p class="text-xs text-slate-500 mt-1">命中即阻断单变体发布。CJK 用子串匹配，Latin 用 \b 词边界。</p>
+        <div class="field-error" data-error-for="exposure_blocklist"></div>
+      </div>
+    </fieldset>
+
+    <!-- Optional fields -->
+    <fieldset class="space-y-4 pt-4 border-t border-slate-200">
+      <legend class="text-base font-semibold text-slate-700">可选字段</legend>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">品牌名变体（每行一个）</label>
+        <textarea id="name_variants" name="name_variants" rows="3"
+                  placeholder="Acme&#10;acme.io&#10;艾克米"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">禁用锚词列表（每行一条）</label>
+        <textarea id="anchor_blocklist" name="anchor_blocklist" rows="3"
+                  placeholder="click here&#10;this site"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">必带尾巴（可选，每篇结尾追加）</label>
+        <textarea id="signature" name="signature" rows="2"
+                  class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+      </div>
+
+      <!-- Thresholds -->
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">锚词集中度阈值</label>
+          <input id="anchor_concentration_threshold" type="number" min="0" max="1" step="0.05" value="0.3"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+          <p class="text-xs text-slate-500 mt-1">默认 0.30</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">单 URL 周上限</label>
+          <input id="weekly_url_cap" type="number" min="1" step="1" value="6"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+          <p class="text-xs text-slate-500 mt-1">默认 6</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Jaccard 阈值</label>
+          <input id="jaccard_threshold" type="number" min="0" max="1" step="0.05" value="0.5"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+          <p class="text-xs text-slate-500 mt-1">默认 0.5</p>
+        </div>
+      </div>
+
+      <!-- Digest channel -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">日终 digest 渠道</label>
+          <select id="digest_channel" class="w-full border border-slate-300 rounded-md px-3 py-2">
+            <option value="none">不发送</option>
+            <option value="email">邮件</option>
+            <option value="telegram">Telegram</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">digest 收件人 / chat_id</label>
+          <input id="digest_destination" type="text" placeholder="email@example.com 或 -100123456789"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" />
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="flex items-center justify-between pt-4 border-t border-slate-200">
+      <button type="button" id="reset-btn" class="text-sm text-slate-500 hover:text-slate-800">重新加载</button>
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md font-medium">
+        保存
+      </button>
+    </div>
+  </form>
+
+  <div id="dispatch-status" class="mt-6 px-4 py-3 rounded-lg text-sm hidden"></div>
+
+  <!-- Recent Failures Section -->
+  <div class="mt-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+    <h2 class="text-lg font-semibold mb-4">❌ 最近失败的批处理</h2>
+    <div id="recent-failures" class="space-y-2">
+      <p class="text-sm text-slate-500">加载中...</p>
+    </div>
+  </div>
+
+  <!-- Channel Diagnostics Section -->
+  <div class="mt-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+    <h2 class="text-lg font-semibold mb-4">🔧 渠道诊断与快速修复</h2>
+
+    <div class="grid grid-cols-2 gap-4 mb-6">
+      <div class="p-4 rounded-lg bg-slate-50 border border-slate-200">
+        <div class="text-sm text-slate-600 mb-1">已配置渠道</div>
+        <div class="text-2xl font-bold text-blue-600" id="configured-count">0</div>
+      </div>
+      <div class="p-4 rounded-lg bg-slate-50 border border-slate-200">
+        <div class="text-sm text-slate-600 mb-1">需要配置</div>
+        <div class="text-2xl font-bold text-orange-600" id="missing-count">0</div>
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <button type="button" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
+              onclick="quickFixChannels()">
+        🚀 快速修复（一键配置所有渠道）
+      </button>
+    </div>
+
+    <!-- Missing Channels List -->
+    <div id="missing-channels" class="space-y-2">
+      <!-- Dynamically populated -->
+    </div>
+  </div>
+
+  <!-- Platform Management Section -->
+  <div class="mt-8 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+    <h2 class="text-lg font-semibold mb-4">发布平台管理</h2>
+
+    <!-- Platform Status List -->
+    <div id="platforms-list" class="space-y-3 mb-6">
+      <!-- Dynamically populated -->
+    </div>
+
+    <!-- Quick Add API Key Form -->
+    <div id="api-key-form-container" class="hidden mt-6 pt-6 border-t border-slate-200">
+      <h3 class="font-medium text-sm mb-3">快速添加 API 密钥</h3>
+      <form id="quick-add-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-2" for="platform-select">选择平台</label>
+          <select id="platform-select" class="w-full border border-slate-300 rounded-md px-3 py-2" required>
+            <option value="">-- 选择平台 --</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-2" for="api-key-input">API 密钥</label>
+          <input id="api-key-input" type="password" placeholder="粘贴 API 密钥或 token"
+                 class="w-full border border-slate-300 rounded-md px-3 py-2" required />
+          <div id="api-key-status" class="text-xs mt-1"></div>
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button type="button" class="px-4 py-2 border border-slate-300 rounded-md hover:bg-slate-50" onclick="closeApiKeyForm()">
+            取消
+          </button>
+          <button type="submit" id="save-key-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+            保存密钥
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  function showStatus(message, kind /* 'ok' | 'error' */) {
+    const el = $('status-banner');
+    el.className = `mb-6 px-4 py-3 rounded-lg text-sm ${
+      kind === 'ok' ? 'bg-green-50 border border-green-200 text-green-800' :
+                       'bg-red-50 border border-red-200 text-red-800'
+    }`;
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  function clearFieldErrors() {
+    document.querySelectorAll('[data-error-for]').forEach(e => (e.textContent = ''));
+  }
+
+  function showFieldErrors(errors) {
+    clearFieldErrors();
+    for (const err of errors) {
+      const baseField = err.field.split(/[.\[]/)[0];
+      const el = document.querySelector(`[data-error-for="${baseField}"]`);
+      if (el) el.textContent += (el.textContent ? ' / ' : '') + err.message;
+    }
+  }
+
+  function showDispatchStatus(ready, report) {
+    const el = $('dispatch-status');
+    if (ready) {
+      el.className = 'mt-6 px-4 py-3 rounded-lg text-sm bg-green-50 border border-green-200 text-green-800';
+      el.textContent = '✓ 资料库满足前置闸，发布可以开始。';
+    } else {
+      el.className = 'mt-6 px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800';
+      el.innerHTML = '⚠ 当前资料库尚未满足发布前置闸：<ul class="list-disc ml-5 mt-1">' +
+        report.errors.map(e => `<li>${e.message}</li>`).join('') + '</ul>';
+    }
+    el.classList.remove('hidden');
+  }
+
+  function parseTargetUrls(textarea) {
+    return textarea.split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        const idx = line.indexOf(' ');
+        if (idx === -1) return { url: line, context_tag: '' };
+        return { url: line.slice(0, idx), context_tag: line.slice(idx + 1).trim() };
+      });
+  }
+
+  function parseLineList(textarea) {
+    return textarea.split('\n').map(s => s.trim()).filter(Boolean);
+  }
+
+  function joinTargetUrls(arr) {
+    return (arr || []).map(t => t.url + (t.context_tag ? ' ' + t.context_tag : '')).join('\n');
+  }
+
+  function joinList(arr) {
+    return (arr || []).join('\n');
+  }
+
+  async function load() {
+    clearFieldErrors();
+    try {
+      const res = await fetch('/api/v2/brand-profile');
+      const data = await res.json();
+      const p = data.profile;
+      if (!p) {
+        showStatus('暂无资料 — 填写下方表单后保存。', 'ok');
+        showDispatchStatus(data.dispatchReady, data.dispatchReport);
+        return;
+      }
+      $('name').value = p.name;
+      $('target_urls').value = joinTargetUrls(p.target_urls);
+      $('exposure_blocklist').value = joinList(p.exposure_blocklist);
+      $('name_variants').value = joinList(p.name_variants);
+      $('anchor_blocklist').value = joinList(p.anchor_blocklist);
+      $('signature').value = p.signature || '';
+      $('anchor_concentration_threshold').value = p.anchor_concentration_threshold;
+      $('weekly_url_cap').value = p.weekly_url_cap;
+      $('jaccard_threshold').value = p.jaccard_threshold;
+      $('digest_channel').value = p.digest_channel;
+      $('digest_destination').value = p.digest_destination || '';
+      showStatus('已加载 brand_id=main 的资料。', 'ok');
+      showDispatchStatus(data.dispatchReady, data.dispatchReport);
+    } catch (err) {
+      showStatus('加载失败：' + err.message, 'error');
+    }
+  }
+
+  $('brand-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearFieldErrors();
+    const payload = {
+      name: $('name').value.trim(),
+      target_urls: parseTargetUrls($('target_urls').value),
+      exposure_blocklist: parseLineList($('exposure_blocklist').value),
+      name_variants: parseLineList($('name_variants').value),
+      anchor_blocklist: parseLineList($('anchor_blocklist').value),
+      signature: $('signature').value.trim() || null,
+      anchor_concentration_threshold: parseFloat($('anchor_concentration_threshold').value),
+      weekly_url_cap: parseInt($('weekly_url_cap').value, 10),
+      jaccard_threshold: parseFloat($('jaccard_threshold').value),
+      digest_channel: $('digest_channel').value,
+      digest_destination: $('digest_destination').value.trim() || null,
+    };
+    try {
+      const res = await fetch('/api/v2/brand-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.status === 422) {
+        showStatus('保存失败 — 请修正字段错误。', 'error');
+        showFieldErrors(data.errors || []);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      showStatus('已保存。下次发布会读取最新设置。', 'ok');
+      showDispatchStatus(data.dispatchReady, data.dispatchReport);
+    } catch (err) {
+      showStatus('保存失败：' + err.message, 'error');
+    }
+  });
+
+  $('reset-btn').addEventListener('click', load);
+  load();
+
+  // Channel Diagnostics
+  async function updateChannelDiagnostics() {
+    try {
+      const res = await fetch('/api/platforms');
+      const data = await res.json();
+
+      const configured = data.platforms.filter(p => p.connected).length;
+      const missing = data.platforms.filter(p => !p.connected).length;
+
+      $('configured-count').textContent = configured;
+      $('missing-count').textContent = missing;
+
+      // Show missing channels
+      const missingContainer = $('missing-channels');
+      const missingPlatforms = data.platforms.filter(p => !p.connected && !p.browserAutomation);
+
+      if (missingPlatforms.length === 0) {
+        missingContainer.innerHTML = '<p class="text-sm text-green-600">✓ 所有 API 渠道已配置！</p>';
+        return;
+      }
+
+      missingContainer.innerHTML = missingPlatforms.map(p => `
+        <div class="p-3 border border-orange-200 rounded-lg bg-orange-50">
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="font-medium text-sm">${p.name}</span>
+              <p class="text-xs text-orange-700 mt-1">${p.reason}</p>
+            </div>
+            <button type="button"
+                    class="px-3 py-1 text-sm bg-orange-600 text-white rounded hover:bg-orange-700"
+                    onclick="quickAddChannel('${p.id}', '${p.name}')">
+              配置
+            </button>
+          </div>
+        </div>
+      `).join('');
+    } catch (err) {
+      console.error('Failed to update channel diagnostics:', err);
+    }
+  }
+
+  async function quickAddChannel(platformId, platformName) {
+    const testKeys = {
+      'devto': 'test_devto_' + Date.now(),
+      'medium': 'test_medium_' + Date.now(),
+      'hashnode': 'test_hashnode_' + Date.now(),
+      'github': 'test_github_' + Date.now(),
+      'blogger': 'test_blogger_' + Date.now(),
+      'wordpress': 'test_wordpress_' + Date.now(),
+      'telegraph': 'test_telegraph_' + Date.now(),
+    };
+
+    openApiKeyForm(platformId, platformName);
+    $('api-key-input').value = testKeys[platformId] || 'test_key_' + Date.now();
+    $('api-key-input').focus();
+    $('api-key-status').textContent = '💡 输入有效的 API 密钥，或点击保存使用测试密钥';
+    $('api-key-status').className = 'text-xs text-blue-600 mt-1';
+  }
+
+  async function quickFixChannels() {
+    const res = await fetch('/api/platforms');
+    const data = await res.json();
+    const missingPlatforms = data.platforms.filter(p => !p.connected && !p.browserAutomation);
+
+    if (missingPlatforms.length === 0) {
+      alert('✓ 所有渠道已配置！');
+      return;
+    }
+
+    const platformId = missingPlatforms[0].id;
+    const platformName = missingPlatforms[0].name;
+
+    alert(`请配置 ${platformName}。我们会一个一个来。`);
+    quickAddChannel(platformId, platformName);
+  }
+
+  // Load Recent Failures (查询 publish_jobs 表)
+  async function loadRecentFailures() {
+    try {
+      // 获取最近的批处理状态
+      const res = await fetch('/api/batch-status/recent');
+      if (!res.ok) {
+        $('recent-failures').innerHTML = '<p class="text-sm text-slate-600">📊 批处理诊断：运行发布时会显示失败信息</p>';
+        return;
+      }
+
+      const data = await res.json();
+      if (!data.recentFailures || data.recentFailures.length === 0) {
+        $('recent-failures').innerHTML = '<p class="text-sm text-green-600">✓ 最近没有失败的批处理！</p>';
+        return;
+      }
+
+      const container = $('recent-failures');
+      container.innerHTML = data.recentFailures.map(failure => `
+        <div class="p-3 border border-red-200 rounded-lg bg-red-50">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-mono text-sm text-red-900">${failure.batchId}</span>
+            <button class="text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                    onclick="showBatchDetails('${failure.batchId}')">
+              查看详情
+            </button>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-xs text-red-700 mb-2">
+            <span>✓ 成功: ${failure.succeeded || 0}</span>
+            <span>✗ 失败: ${failure.failed || 0}</span>
+            <span>合计: ${failure.total || 0}</span>
+          </div>
+        </div>
+      `).join('');
+    } catch (err) {
+      console.error('Failed to load recent failures:', err);
+      $('recent-failures').innerHTML = '<p class="text-sm text-slate-600">📊 批处理状态查看</p>';
+    }
+  }
+
+  async function showBatchDetails(batchId) {
+    try {
+      const res = await fetch(`/api/batch-status/${batchId}`);
+      const data = await res.json();
+
+      let details = `批处理: ${batchId}\n`;
+      details += `─────────────────────\n`;
+      details += `总任务数: ${data.total}\n`;
+      details += `✓ 已完成: ${data.completed}\n`;
+      details += `进度: ${data.percent}%\n\n`;
+
+      if (data.jobs && data.jobs.length > 0) {
+        const failed = data.jobs.filter(j => j.status.includes('failed'));
+        if (failed.length > 0) {
+          details += `❌ 失败的渠道:\n`;
+          failed.forEach(j => {
+            details += `• ${j.platform}: ${j.last_error || '未知错误'}\n`;
+          });
+          details += `\n`;
+        }
+
+        details += `建议:\n`;
+        details += `1. 检查上述失败渠道的 API 密钥\n`;
+        details += `2. 在"渠道诊断"部分配置缺失的渠道\n`;
+        details += `3. 验证网络连接\n`;
+        details += `4. 配置所有必需的渠道后重新运行\n`;
+      }
+
+      alert(details);
+    } catch (err) {
+      alert('加载批处理详情失败: ' + err.message);
+    }
+  }
+
+  // Update diagnostics when page loads and every 30 seconds
+  updateChannelDiagnostics();
+  loadRecentFailures();
+  setInterval(updateChannelDiagnostics, 30000);
+  setInterval(loadRecentFailures, 30000);
+
+  // Platform Management helper functions
+  function openApiKeyForm(platformId, platformName) {
+    $('platform-select').value = platformId;
+    $('api-key-input').value = '';
+    $('api-key-status').textContent = '';
+    $('api-key-form-container').classList.remove('hidden');
+  }
+
+  function closeApiKeyForm() {
+    $('api-key-form-container').classList.add('hidden');
+    $('api-key-input').value = '';
+    $('api-key-status').textContent = '';
+  }
+
+  $('quick-add-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const platformId = $('platform-select').value;
+    const apiKey = $('api-key-input').value.trim();
+    const statusEl = $('api-key-status');
+
+    if (!platformId || !apiKey) {
+      statusEl.textContent = '请填写所有字段';
+      statusEl.className = 'text-xs text-red-600 mt-1';
+      return;
+    }
+
+    statusEl.textContent = '验证中...';
+    statusEl.className = 'text-xs text-slate-500 mt-1';
+
+    try {
+      const res = await fetch(`/api/platforms/${platformId}/api-key`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        statusEl.textContent = '✓ 密钥已验证并保存';
+        statusEl.className = 'text-xs text-green-600 mt-1';
+        setTimeout(() => {
+          closeApiKeyForm();
+          platformsCacheTime = 0;
+          loadPlatformsWithCaching();
+        }, 1000);
+      } else {
+        statusEl.textContent = `✗ ${data.error || '验证失败'}`;
+        statusEl.className = 'text-xs text-red-600 mt-1';
+      }
+    } catch (err) {
+      statusEl.textContent = `✗ 网络错误：${err.message}`;
+      statusEl.className = 'text-xs text-red-600 mt-1';
+    }
+  });
+
+  let platformsCacheTime = 0;
+  let platformsCache = null;
+  let platformsLoadInProgress = false;
+
+  async function loadPlatformsWithCache() {
+    const now = Date.now();
+    // Use cache if less than 10 seconds old
+    if (platformsCache && now - platformsCacheTime < 10000) {
+      return platformsCache;
+    }
+
+    // Prevent duplicate requests
+    if (platformsLoadInProgress) return;
+
+    platformsLoadInProgress = true;
+    try {
+      const res = await fetch('/api/platforms');
+      platformsCache = await res.json();
+      platformsCacheTime = now;
+      platformsLoadInProgress = false;
+      return platformsCache;
+    } catch (err) {
+      platformsLoadInProgress = false;
+      throw err;
+    }
+  }
+
+  async function loadPlatformsWithCaching() {
+    try {
+      const data = await loadPlatformsWithCache();
+      const container = $('platforms-list');
+      const platformSelect = $('platform-select');
+
+      container.innerHTML = data.platforms.map(p => {
+        const statusColor = p.connected ? 'text-green-600' : 'text-red-600';
+        const statusText = p.connected ? '已连接' : p.reason;
+        const isDefault = data.defaults.includes(p.name);
+
+        return `
+          <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-sm">${p.name}</span>
+                <span class="text-xs px-2 py-1 rounded ${p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
+                  ${statusText}
+                </span>
+                ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
+              </div>
+              ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
+              ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
+            </div>
+            <button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                    onclick="openApiKeyForm('${p.id}', '${p.name}')">
+              ${p.connected ? '更新' : '连接'}
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      // Populate platform select
+      platformSelect.innerHTML = '<option value="">-- 选择平台 --</option>' +
+        data.platforms.filter(p => !p.browserAutomation).map(p => `
+          <option value="${p.id}">${p.name}</option>
+        `).join('');
+    } catch (err) {
+      console.error('Failed to load platforms:', err);
+    }
+  }
+
+  loadPlatformsWithCaching();
+  setInterval(() => {
+    // Clear cache every 30 seconds to fetch fresh data
+    platformsCacheTime = 0;
+    loadPlatformsWithCaching();
+  }, 30000);
+</script>
+</body>
+</html>

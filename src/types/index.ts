@@ -93,7 +93,7 @@ export interface LLMResponse {
 export interface LLMWithToolsOptions {
   model?: string;
   messages: LLMMessage[];
-  tools?: ToolDefinition[];
+  tools?: unknown[]; // adapter-specific tool definitions (e.g. ChatCompletionTool from openai SDK)
   temperature?: number;
   maxTokens?: number;
 }
@@ -123,16 +123,17 @@ export interface PublishResults {
 
 // ==================== 适配器 ====================
 
+export interface TestConnectionResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface PlatformAdapter {
   name: string;
   isBrowserAutomation?: boolean;
   canPublishAutomatically?: boolean;
   publish(options: PublishOptions): Promise<PublishResult>;
-  config?: {
-    composeUrl?: string;
-    authFileName?: string;
-    customAutomation?: (page: unknown) => Promise<void>;
-  };
+  testConnection?(): Promise<TestConnectionResult>;
 }
 
 // ==================== 数据库 ====================
@@ -407,4 +408,86 @@ export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 export function hasMessage(error: unknown): error is { message: string } {
   return isObject(error) && 'message' in error && isString(error.message);
+}
+
+// ==================== v0.2 third-party-voice types (Plan Unit 4 / Unit 5) ====================
+
+/**
+ * 三个人设组（Plan R6）。代码内统一英文 enum；UI 标签用中文。
+ */
+export type PersonaGroup = 'tech_blogger' | 'personal_essay' | 'reviewer';
+
+/**
+ * 人设标签（中文）— 仅用于 UI 渲染。
+ */
+export const PERSONA_LABEL_ZH: Record<PersonaGroup, string> = {
+  tech_blogger: '技术博主',
+  personal_essay: '个人随笔',
+  reviewer: '评论客',
+};
+
+/**
+ * MVP_PLATFORMS → PersonaGroup 映射（Plan R6 锚定）。
+ * 单一数据源；运行时和 UI 都通过此表反查。
+ */
+export const PERSONA_TO_PLATFORMS: Record<PersonaGroup, readonly string[]> = {
+  tech_blogger: ['Dev.to', 'Hashnode', 'GitHub'],
+  personal_essay: ['Medium'],
+  reviewer: ['Telegra.ph', 'Blogger', 'WordPress'],
+} as const;
+
+/**
+ * 给定平台名返回所属 persona 组。未知平台返 null。
+ */
+export function platformToPersona(platform: string): PersonaGroup | null {
+  for (const [group, platforms] of Object.entries(PERSONA_TO_PLATFORMS)) {
+    if (platforms.includes(platform)) return group as PersonaGroup;
+  }
+  return null;
+}
+
+/**
+ * Persona prompt frontmatter — Unit 4 loader 解析后的 metadata。
+ */
+export interface PersonaPromptMeta {
+  persona: PersonaGroup;
+  label_zh: string;
+  tone_keywords: string[];
+  example_phrases?: string[];
+}
+
+/**
+ * Loader 加载后的完整 prompt（frontmatter + body 模板正文）。
+ */
+export interface PersonaPrompt {
+  meta: PersonaPromptMeta;
+  body: string;
+}
+
+/**
+ * 锚词生成 mini-prompt 的输入上下文。
+ */
+export interface AnchorGenerationContext {
+  brand_name: string;
+  brand_variants: string[];
+  article_summary: string;
+  target_url: string;
+  target_url_context_tag: string;
+  anchor_blocklist: string[];
+  recent_top_anchors: string[];
+}
+
+/**
+ * 单个变体（Unit 5 输出 → Unit 7 lint → Unit 8 预览 → Unit 10 发布）。
+ */
+export interface Variant {
+  variant_id: string;
+  platform: string;
+  persona_group: PersonaGroup;
+  title: string;
+  body_markdown: string;
+  anchor_words: string[];
+  target_url: string;
+  generation_status: 'ok' | 'failed';
+  error?: string;
 }
