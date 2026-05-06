@@ -132,6 +132,10 @@ export interface PlatformAdapter {
   name: string;
   isBrowserAutomation?: boolean;
   canPublishAutomatically?: boolean;
+  /** Hybrid adapters (e.g. Medium) that prefer an API token but can fall back
+   *  to browser session-based publishing when no token is configured. UI uses
+   *  this to render a secondary "use browser login" link. */
+  supportsBrowserFallback?: boolean;
   publish(options: PublishOptions): Promise<PublishResult>;
   testConnection?(): Promise<TestConnectionResult>;
 }

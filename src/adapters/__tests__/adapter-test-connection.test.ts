@@ -106,10 +106,10 @@ describe('API Adapter testConnection()', () => {
       expect(result.ok).toBe(true);
     });
 
-    it('returns error when token is missing', async () => {
+    it('returns error when token is missing and no browser session', async () => {
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/MEDIUM_INTEGRATION_TOKEN|浏览器登录/);
     });
 
     it('returns error when API returns 403', async () => {

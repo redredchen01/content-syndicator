@@ -9,6 +9,7 @@ export abstract class BaseAdapter implements PlatformAdapter {
   abstract name: string;
   isBrowserAutomation?: boolean;
   canPublishAutomatically?: boolean;
+  supportsBrowserFallback?: boolean;
   abstract publish(options: PublishOptions): Promise<PublishResult>;
 
   protected ok(publishedUrl: string): PublishResult {
