@@ -152,6 +152,16 @@ describe('generatePromoMarkdown — empty content guard', () => {
     ).rejects.toThrow('LLM returned empty title or content');
   });
 
+  it('throws when LLM returns whitespace-only content', async () => {
+    mockOpenAI.chat.completions.create.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ title: 'Promo Title', content: '   ', tags: [], excerpt: '' }) } }],
+    });
+    const { generatePromoMarkdown } = await import('../index');
+    await expect(
+      generatePromoMarkdown('Primary Title', 'Primary content', ['http://x']),
+    ).rejects.toThrow('LLM returned empty title or content');
+  });
+
   it('returns result when both title and content are non-empty', async () => {
     mockOpenAI.chat.completions.create.mockResolvedValue({
       choices: [{ message: { content: JSON.stringify({ title: 'Promo', content: 'Promo body', tags: [], excerpt: '' }) } }],

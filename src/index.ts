@@ -70,15 +70,16 @@ function shutdown(signal: string): void {
     clearInterval(credentialValidationInterval);
     credentialValidationInterval = null;
   }
-  server.close(() => {
-    logger.info('[Server] HTTP server closed — exiting');
-    process.exit(0);
-  });
   // Force exit if HTTP server doesn't drain within 10 s (in-flight requests)
-  setTimeout(() => {
+  const forceExitTimer = setTimeout(() => {
     logger.warn('[Server] Forcing exit after 10 s drain timeout');
     process.exit(1);
   }, 10_000).unref();
+  server.close(() => {
+    clearTimeout(forceExitTimer);
+    logger.info('[Server] HTTP server closed — exiting');
+    process.exit(0);
+  });
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
