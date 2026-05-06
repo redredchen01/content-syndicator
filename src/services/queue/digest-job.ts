@@ -14,6 +14,7 @@ import type Database from 'better-sqlite3';
 import type { PublishJob } from '../../db/repositories';
 import { brandProfile } from '../../db/repositories';
 import { logger } from '../../utils/logger';
+import { google } from 'googleapis';
 
 interface DailyStats {
   succeeded: number;
@@ -46,8 +47,7 @@ export async function handleDailyDigestJob(job: PublishJob, db: Database.Databas
   if (profile.digest_channel === 'telegram' && profile.digest_destination) {
     await sendTelegramDigest(profile.digest_destination, text);
   } else if (profile.digest_channel === 'email' && profile.digest_destination) {
-    logger.info(`[DigestJob] Email digest to ${profile.digest_destination} (not implemented — log only)`);
-    logger.info(text);
+    await sendEmailDigest(profile.digest_destination, text);
   }
 }
 
@@ -140,6 +140,84 @@ async function sendTelegramDigest(token: string, text: string): Promise<void> {
     }
   } catch (err: any) {
     logger.warn(`[DigestJob] Telegram send failed: ${err.message}`);
+  }
+}
+
+// -----------------------------------------------------------------------
+// Email via Gmail API (domain-wide delegation)
+// -----------------------------------------------------------------------
+//
+// Prerequisites (one-time admin setup):
+//   1. Enable Gmail API in the GCP project that owns the service account.
+//   2. In Google Workspace Admin → Security → API controls →
+//      Domain-wide delegation: add the service account client_id with
+//      scope https://www.googleapis.com/auth/gmail.send
+//   3. Set DIGEST_SENDER_EMAIL to the Workspace user the SA impersonates.
+//
+// DIGEST_SENDER_EMAIL is the "From" address and the Gmail user whose
+// send-as quota is used. It can be the same address as digest_destination.
+
+async function sendEmailDigest(toEmail: string, text: string): Promise<void> {
+  const credsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  const senderEmail = process.env.DIGEST_SENDER_EMAIL;
+
+  if (!credsJson) {
+    logger.warn('[DigestJob] GOOGLE_APPLICATION_CREDENTIALS_JSON not set — skipping email');
+    return;
+  }
+  if (!senderEmail) {
+    logger.warn(
+      '[DigestJob] DIGEST_SENDER_EMAIL not set — cannot send email digest. ' +
+      'Set it to the Google Workspace address the service account impersonates.',
+    );
+    return;
+  }
+
+  try {
+    const credentials = JSON.parse(credsJson);
+
+    // JWT client with domain-wide delegation: `subject` is the Workspace user
+    // whose mailbox we send from.
+    const auth = new google.auth.JWT({
+      email: credentials.client_email,
+      key: credentials.private_key,
+      scopes: ['https://www.googleapis.com/auth/gmail.send'],
+      subject: senderEmail,
+    });
+
+    const dateLabel = new Date().toLocaleDateString('zh-TW', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+    const subject = `📊 外鏈發佈日報 ${dateLabel}`;
+
+    // Build a minimal RFC 2822 message with UTF-8 subject encoding.
+    const encodedSubject = `=?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`;
+    const rawMessage = [
+      `From: ${senderEmail}`,
+      `To: ${toEmail}`,
+      `Subject: ${encodedSubject}`,
+      `Content-Type: text/plain; charset=utf-8`,
+      `MIME-Version: 1.0`,
+      '',
+      text,
+    ].join('\r\n');
+
+    const gmail = google.gmail({ version: 'v1', auth });
+    await gmail.users.messages.send({
+      userId: senderEmail,
+      requestBody: { raw: Buffer.from(rawMessage).toString('base64url') },
+    });
+
+    logger.info(`[DigestJob] Email digest sent → ${toEmail}`);
+  } catch (err: any) {
+    logger.warn(`[DigestJob] Email send failed: ${err.message}`);
+    if (err.message?.includes('unauthorized_client') || err.status === 403) {
+      logger.warn(
+        '[DigestJob] Hint: The service account needs domain-wide delegation ' +
+        'with scope https://www.googleapis.com/auth/gmail.send. ' +
+        'See Google Workspace Admin → Security → API controls → Domain-wide delegation.',
+      );
+    }
   }
 }
 

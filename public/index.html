@@ -597,6 +597,15 @@
                      :placeholder="settingsRaw.GOOGLE_APPLICATION_CREDENTIALS_JSON ? '當前已配置（粘贴新 JSON 覆盖；留空保留）' : '粘贴整段 service account JSON'"
                      class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-blue-300"></textarea>
             </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                日報發件地址 <span class="text-xs font-normal text-gray-400">（DIGEST_SENDER_EMAIL）</span>
+              </label>
+              <input x-model="infraForm.DIGEST_SENDER_EMAIL" type="email"
+                     :placeholder="settingsRaw.DIGEST_SENDER_EMAIL || 'sender@yourdomain.com'"
+                     class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300">
+              <p class="text-xs text-gray-400 mt-1">Service Account 將以此 Workspace 帳號身份發信（需開啟 Domain-wide Delegation + gmail.send 授權）</p>
+            </div>
             <p class="text-xs text-gray-500">
               💡 日終 digest 渠道（email / Telegram）在
               <a href="#" @click.prevent="switchView('brand')" class="text-blue-600 underline">品牌資料庫</a>
@@ -736,7 +745,7 @@ function syndicatorApp() {
     zipImporting: false,
     zipImportResult: null,
     // Infra section
-    infraForm: { GOOGLE_SHEET_ID: '', GOOGLE_APPLICATION_CREDENTIALS_JSON: '' },
+    infraForm: { GOOGLE_SHEET_ID: '', GOOGLE_APPLICATION_CREDENTIALS_JSON: '', DIGEST_SENDER_EMAIL: '' },
     infraSaving: false,
 
     get apiPlatforms() {
@@ -949,6 +958,7 @@ function syndicatorApp() {
         this.browserForm.BROWSER_AUTH_CHROME_USER_DATA_DIR = data.BROWSER_AUTH_CHROME_USER_DATA_DIR || '';
         this.browserForm.BROWSER_AUTH_CHROME_PROFILE = data.BROWSER_AUTH_CHROME_PROFILE || '';
         this.infraForm.GOOGLE_SHEET_ID = data.GOOGLE_SHEET_ID || '';
+        this.infraForm.DIGEST_SENDER_EMAIL = data.DIGEST_SENDER_EMAIL || '';
         // service account JSON not pre-filled (sensitive)
         this.llmForm.SELECTED_MODEL = data.SELECTED_MODEL || '';
       } catch (e) {
@@ -1174,6 +1184,7 @@ function syndicatorApp() {
       if (this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON.trim()) {
         payload.GOOGLE_APPLICATION_CREDENTIALS_JSON = this.infraForm.GOOGLE_APPLICATION_CREDENTIALS_JSON.trim();
       }
+      if (this.infraForm.DIGEST_SENDER_EMAIL.trim()) payload.DIGEST_SENDER_EMAIL = this.infraForm.DIGEST_SENDER_EMAIL.trim();
       const ok = await this.saveSection({
         flagKey: 'infraSaving',
         msgSection: 'infra',

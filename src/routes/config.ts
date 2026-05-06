@@ -58,6 +58,7 @@ function getMaskedEnv() {
     BROWSER_AUTH_CHROME_PROFILE: getChromeProfileDir(),
     GOOGLE_APPLICATION_CREDENTIALS_JSON: process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ? '{"masked": true}' : '',
     GOOGLE_SHEET_ID: process.env.GOOGLE_SHEET_ID || '',
+    DIGEST_SENDER_EMAIL: process.env.DIGEST_SENDER_EMAIL || '',
     AUTH_STATUS: authStatus
   };
 }
@@ -105,6 +106,7 @@ router.post('/api/settings', asyncRoute(async (req, res) => {
     'WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD',
     'ENABLE_BROWSER_AUTOMATION', 'BROWSER_AUTH_MODE',
     'BROWSER_AUTH_CHROME_USER_DATA_DIR', 'BROWSER_AUTH_CHROME_PROFILE',
+    'DIGEST_SENDER_EMAIL',
   ] as const;
   await updateEnv(Object.fromEntries(KEYS.map(k => [k, req.body[k]])));
   logger.success('Settings updated successfully via Web UI.');
