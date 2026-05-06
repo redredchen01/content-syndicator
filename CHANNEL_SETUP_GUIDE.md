@@ -280,3 +280,21 @@ Medium 与 Blogger 现在统一支持「点按钮 → 浏览器登录 → 自动
 - `OAUTH_REDIRECT_URI` 改成你的公网域名 + `/api/auth/google/callback`
 - Google Cloud Console 的 Authorized redirect URIs 同步加上这个 URL
 - 备份 `ENCRYPTION_KEY`：丢失会导致所有已存的 refresh_token 无法解密
+
+### 生产部署的安全 hardening
+
+**ENCRYPTION_KEY 必须设置**（生产模式下不设会拒绝启动）：
+```bash
+openssl rand -hex 32  # 复制结果到 .env 的 ENCRYPTION_KEY
+```
+切记备份这把密钥 — 丢失会导致所有已加密的 API key 和 OAuth refresh_token 不可恢复。
+
+**ENCRYPTION_KEY 旋转**：换新密钥后，旧的 oauth_tokens.refresh_token 行无法解密。系统会自动检测并清理失败的行（admin 页 Blogger 卡片会变回未连接），用户重新点 Connect with Google 即可。但加密的 api_keys_encrypted 没有同样的自动清理 — 旋转前请在 admin 页面重新填写 API key 表单。
+
+**OAuth 端点访问限制**：默认只允许 loopback (`127.0.0.1`) 访问 `/api/auth/google/start` 和 `DELETE /api/auth/oauth/:platform`，防止任何能访问到 server 端口的网络对手断开你的 OAuth 连接或刷爆 Google client_id 配额。
+
+部署到公网时（反向代理 + 自己的 auth 层），设置：
+```
+OAUTH_ALLOW_REMOTE=true
+```
+**前提是**：你的反向代理必须对所有 admin/auth 路径强制鉴权（basic auth、JWT、SSO 等）。否则相当于把这些端点直接暴露给公网。

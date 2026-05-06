@@ -164,6 +164,15 @@ describe('Google OAuth routes', () => {
     });
   });
 
+  describe('loopback gating (OAUTH_ALLOW_REMOTE)', () => {
+    it('supertest connections come from 127.0.0.1 → loopback gate allows', async () => {
+      // Sanity check that supertest's in-process server connects via loopback,
+      // so the loopback middleware does not interfere with the rest of these tests.
+      const res = await request(app).get('/api/auth/google/start?platform=blogger').redirects(0);
+      expect(res.status).toBe(302);
+    });
+  });
+
   describe('DELETE /api/auth/oauth/:platform', () => {
     it('clears stored tokens', async () => {
       oauthTokens.save(db, 'blogger', { refresh_token: 'to-be-deleted' });

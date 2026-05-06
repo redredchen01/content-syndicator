@@ -17,10 +17,31 @@ export class BloggerAdapter extends BaseAdapter {
    *   1. oauth_tokens row (user OAuth flow — preferred)
    *   2. GOOGLE_APPLICATION_CREDENTIALS_JSON (service account fallback)
    *   3. throw — caller surfaces clear setup hint
+   *
+   * If the OAuth row exists but its ciphertext can no longer be decrypted
+   * (typical cause: ENCRYPTION_KEY was rotated without re-encrypting rows),
+   * we delete the corrupt row and fall through to tier 2 instead of letting
+   * the decryption error stop the chain. This keeps the documented fallback
+   * order intact even after a key rotation incident.
    */
   private getAuthClient(): { client: AuthClient; origin: AuthOrigin } {
     if (oauthTokens.exists(db, 'blogger')) {
-      return { client: getAuthorizedClient('blogger'), origin: 'oauth' };
+      try {
+        return { client: getAuthorizedClient('blogger'), origin: 'oauth' };
+      } catch (e: any) {
+        const msg = e?.message ?? String(e);
+        if (/Failed to decrypt/i.test(msg)) {
+          logger.warn(
+            '[Blogger] oauth_tokens row exists but cannot be decrypted ' +
+            '(likely ENCRYPTION_KEY rotation). Clearing row and falling back ' +
+            'to service-account / setup-hint.',
+          );
+          oauthTokens.delete(db, 'blogger');
+          // fall through to service-account branch
+        } else {
+          throw e;
+        }
+      }
     }
     const credsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
     if (credsJson) {

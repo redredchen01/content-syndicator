@@ -13,6 +13,7 @@ import {
   exchangeCodeForTokens,
   OAUTH_PLATFORM_REGISTRY,
 } from '../services/google-oauth';
+import { loopbackOnly } from '../middleware/loopback-only';
 
 export const router = Router();
 
@@ -122,7 +123,10 @@ router.post('/api/auth/test-connection/:platformId', async (req: Request, res: R
 // ── Google OAuth user-flow ─────────────────────────────────────────────────
 
 // GET /api/auth/google/start?platform=blogger — kick off OAuth consent flow
-router.get('/api/auth/google/start', asyncRoute(async (req, res) => {
+// Loopback-only: this is an ops action that initiates a credential-binding
+// flow on the operator's behalf. /callback stays open (Google must reach it;
+// the state cookie + one-shot Map provides CSRF protection).
+router.get('/api/auth/google/start', loopbackOnly, asyncRoute(async (req, res) => {
   if (!isOAuthConfigured()) {
     return res.status(503).json({
       error: 'Google OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID, ' +
@@ -210,8 +214,10 @@ router.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
   }
 }));
 
-// DELETE /api/auth/oauth/:platform — disconnect (clear stored tokens)
-router.delete('/api/auth/oauth/:platform', asyncRoute(async (req, res) => {
+// DELETE /api/auth/oauth/:platform — disconnect (clear stored tokens).
+// Loopback-only: anyone able to hit this can break a connected operator's
+// publishing pipeline by revoking their OAuth row.
+router.delete('/api/auth/oauth/:platform', loopbackOnly, asyncRoute(async (req, res) => {
   const platform = String(req.params.platform).toLowerCase();
   if (!OAUTH_PLATFORM_REGISTRY[platform]) {
     return res.status(400).json({ ok: false, error: `Unknown OAuth platform: ${platform}` });

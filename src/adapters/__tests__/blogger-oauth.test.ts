@@ -114,6 +114,34 @@ describe('BloggerAdapter — three-tier auth resolution', () => {
     expect(res.error).toMatch(/invalid_grant/);
   });
 
+  it('falls through to service account when oauth_tokens row is corrupt (decryption fails)', async () => {
+    process.env.BLOGGER_BLOG_ID = 'b1';
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = '{"type":"service_account"}';
+    setOAuthEnv();
+
+    // Manually insert a row with garbage ciphertext that cannot be decrypted.
+    // Bypasses oauthTokens.save (which would encrypt valid input).
+    db.prepare(`
+      INSERT OR REPLACE INTO oauth_tokens (platform, refresh_token, updated_at)
+      VALUES ('blogger', 'corrupt-ciphertext-that-will-fail-aes-gcm-decrypt', CURRENT_TIMESTAMP)
+    `).run();
+
+    const blogsGet = vi.fn().mockResolvedValue({ data: { id: 'b1' } });
+    const bloggerSpy = vi.spyOn(google, 'blogger').mockReturnValue({
+      blogs: { get: blogsGet },
+    } as any);
+
+    const res = await adapter.testConnection();
+    expect(res.ok).toBe(true);
+
+    // Verify service-account auth was used (not OAuth client)
+    const authArg = bloggerSpy.mock.calls[0][0]?.auth as any;
+    expect(typeof authArg.getClient).toBe('function'); // GoogleAuth has getClient
+
+    // Corrupt row should have been cleared
+    expect(oauthTokens.exists(db, 'blogger')).toBe(false);
+  });
+
   it('publish() uses oauth_tokens when present and surfaces invalid_grant', async () => {
     process.env.BLOGGER_BLOG_ID = 'b1';
     setOAuthEnv();
