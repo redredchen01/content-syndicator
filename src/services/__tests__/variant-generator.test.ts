@@ -218,7 +218,9 @@ describe('generateVariants', () => {
       .prepare("SELECT * FROM llm_calls WHERE batch_id = ? AND kind = 'variant_body'")
       .all(batchId) as unknown[];
 
-    expect(rows.length).toBe(7); // one per platform
+    // 3 LLM calls: one per persona group (tech_blogger, personal_essay, reviewer)
+    // Other platforms with same persona_group hit the cache
+    expect(rows.length).toBe(3);
     db.close();
   });
 });

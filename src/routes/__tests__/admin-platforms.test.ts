@@ -48,6 +48,38 @@ describe('GET /api/platforms', () => {
     expect(telegraph).toBeDefined();
     expect(telegraph.connected).toBe(true);
   });
+
+  it('marks Blogger as supportsOAuth and exposes oauthConfigured/oauthConnected flags', async () => {
+    const res = await request(app).get('/api/platforms');
+    const blogger = res.body.platforms.find((p: any) => p.name === 'Blogger');
+    expect(blogger).toBeDefined();
+    expect(blogger.supportsOAuth).toBe(true);
+    expect(typeof blogger.oauthConfigured).toBe('boolean');
+    expect(typeof blogger.oauthConnected).toBe('boolean');
+  });
+
+  it('marks Medium as supportsBrowserFallback', async () => {
+    const res = await request(app).get('/api/platforms');
+    const medium = res.body.platforms.find((p: any) => p.name === 'Medium');
+    expect(medium).toBeDefined();
+    expect(medium.supportsBrowserFallback).toBe(true);
+    expect(medium.supportsOAuth).toBe(false);
+  });
+
+  it('does not mark non-OAuth/non-fallback platforms with the new flags', async () => {
+    const res = await request(app).get('/api/platforms');
+    const telegraph = res.body.platforms.find((p: any) => p.name === 'Telegra.ph');
+    expect(telegraph.supportsOAuth).toBe(false);
+    expect(telegraph.supportsBrowserFallback).toBe(false);
+  });
+
+  it('includes browserSessionExists field for every platform', async () => {
+    const res = await request(app).get('/api/platforms');
+    for (const p of res.body.platforms) {
+      expect(p).toHaveProperty('browserSessionExists');
+      expect(typeof p.browserSessionExists).toBe('boolean');
+    }
+  });
 });
 
 describe('PATCH /api/platforms/:platformId/api-key', () => {

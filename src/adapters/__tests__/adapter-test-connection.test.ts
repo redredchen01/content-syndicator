@@ -95,6 +95,15 @@ describe('API Adapter testConnection()', () => {
   describe('Medium Adapter', () => {
     const adapter = new MediumAdapter();
 
+    // Browser-fallback path checks for .auth/medium.json — if a parallel test
+    // file leaves one behind, our 'no token' assertions match the wrong path.
+    beforeEach(async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const authFile = path.join(process.cwd(), '.auth', 'medium.json');
+      if (fs.existsSync(authFile)) fs.unlinkSync(authFile);
+    });
+
     it('returns ok=true when token is valid', async () => {
       process.env.MEDIUM_INTEGRATION_TOKEN = 'Bearer token123';
       (global.fetch as any).mockResolvedValueOnce({
@@ -106,10 +115,10 @@ describe('API Adapter testConnection()', () => {
       expect(result.ok).toBe(true);
     });
 
-    it('returns error when token is missing', async () => {
+    it('returns error when token is missing and no browser session', async () => {
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/MEDIUM_INTEGRATION_TOKEN|浏览器登录/);
     });
 
     it('returns error when API returns 403', async () => {
@@ -224,30 +233,27 @@ describe('API Adapter testConnection()', () => {
   describe('Blogger Adapter', () => {
     const adapter = new BloggerAdapter();
 
-    it('returns error when credentials are missing', async () => {
+    it('returns error when blog ID is missing', async () => {
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/BLOGGER_BLOG_ID/);
     });
 
-    it('returns error when only credentials are provided', async () => {
+    it('returns error when blog ID is missing even with service-account creds', async () => {
       process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = '{}';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/BLOGGER_BLOG_ID/);
     });
 
-    it('returns error when only blog ID is provided', async () => {
+    it('returns Chinese auth-hint when blog ID set but no auth source', async () => {
       process.env.BLOGGER_BLOG_ID = 'blog123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      // BloggerAdapter now prefers OAuth2 user tokens (DB) > service-account JSON (env).
+      // BloggerAdapter prefers OAuth2 user tokens (DB) > service-account JSON (env).
       // When neither is present it prompts the user to connect via OAuth.
-      expect(result.error).toMatch(/not authorized|not configured/i);
+      expect(result.error).toMatch(/Connect with Google|GOOGLE_APPLICATION_CREDENTIALS_JSON/);
     });
-
-    // Note: Full test would require mocking googleapis library
-    // Skipping auth tests as they require complex googleapis mocking
   });
 
   describe('WordPress Adapter', () => {

@@ -257,4 +257,31 @@ export function applyV2Schema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_link_checks_platform_type
       ON link_checks(platform, check_type, checked_at)
   `);
+
+  // variant_cache — LLM generation result caching (Unit 5, R3)
+  // Keyed by hash(brand_id + draft_hash + persona_group) for 24h TTL reuse
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS variant_cache (
+      cache_key TEXT PRIMARY KEY,
+      brand_id TEXT NOT NULL,
+      draft_hash TEXT NOT NULL,
+      persona_group TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body_markdown TEXT NOT NULL,
+      anchor_words TEXT DEFAULT '[]',
+      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      hit_count INTEGER DEFAULT 0
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_variant_cache_brand_expires
+      ON variant_cache(brand_id, expires_at)
+  `);
+
+  // Index for batch queries by brand and status (Unit 6)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_draft_batches_brand_status
+      ON draft_batches(brand_id, status)
+  `);
 }

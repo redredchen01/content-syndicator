@@ -1,23 +1,46 @@
 import express, { Router, Request, Response } from 'express';
 import multer from 'multer';
-import { google } from 'googleapis';
+import crypto from 'crypto';
 import { importSessions } from '../services/browser-session';
 import { allAdapters } from '../adapters';
 import { logger } from '../utils/logger';
-import { db, oauthTokens } from '../db';
-
-const GOOGLE_SCOPES = ['https://www.googleapis.com/auth/blogger'];
-
-function buildOAuth2Client() {
-  const base = process.env.APP_BASE_URL?.replace(/\/+$/, '') ?? `http://localhost:${process.env.PORT || 3000}`;
-  return new google.auth.OAuth2(
-    process.env.GOOGLE_OAUTH_CLIENT_ID,
-    process.env.GOOGLE_OAUTH_CLIENT_SECRET,
-    `${base}/api/auth/google/callback`,
-  );
-}
+import { asyncRoute, type Res } from './_helpers';
+import { db } from '../db';
+import { oauthTokens } from '../db/oauth-tokens';
+import {
+  isOAuthConfigured,
+  generateAuthUrl,
+  exchangeCodeForTokens,
+  OAUTH_PLATFORM_REGISTRY,
+} from '../services/google-oauth';
+import { loopbackOnly } from '../middleware/loopback-only';
 
 export const router = Router();
+
+// ── Google OAuth state map (CSRF protection) ───────────────────────────────
+// Single-process Express, so an in-memory Map is enough. Each entry is
+// one-shot (deleted on first lookup) and expires after 5 minutes.
+// A periodic sweep + a hard cap keep the Map bounded under bursty traffic
+// (e.g. an unauthenticated /start spammer cannot grow it without bound).
+interface PendingState { platform: string; expiresAt: number }
+const pendingStates = new Map<string, PendingState>();
+const STATE_TTL_MS = 5 * 60 * 1000;
+const STATE_MAX_ENTRIES = 1000;
+
+function pruneExpiredStates() {
+  const now = Date.now();
+  for (const [k, v] of pendingStates) {
+    if (v.expiresAt < now) pendingStates.delete(k);
+  }
+}
+
+// Periodic sweep so the Map cleans up even when no callback traffic arrives.
+// Skipped under tests/build-time imports — long-running timers prevent vitest
+// from exiting cleanly.
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(pruneExpiredStates, 60_000).unref();
+}
+
 
 // Configure multer for ZIP file uploads
 const upload = multer({
@@ -97,61 +120,129 @@ router.post('/api/auth/test-connection/:platformId', async (req: Request, res: R
   }
 });
 
-// GET /api/auth/google/start — redirect user to Google consent page
-router.get('/api/auth/google/start', (_req: Request, res: Response) => {
-  if (!process.env.GOOGLE_OAUTH_CLIENT_ID || !process.env.GOOGLE_OAUTH_CLIENT_SECRET) {
-    return res.status(500).json({ error: 'GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured' });
-  }
-  const oauth2Client = buildOAuth2Client();
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    prompt: 'consent',
-    scope: GOOGLE_SCOPES,
-  });
-  logger.info('[Auth] Redirecting to Google OAuth consent page');
-  res.redirect(url);
-});
+// ── Google OAuth user-flow ─────────────────────────────────────────────────
 
-// GET /api/auth/google/callback — exchange code, persist tokens
-router.get('/api/auth/google/callback', async (req: Request, res: Response) => {
-  const { code, error: oauthError } = req.query as Record<string, string>;
+// GET /api/auth/google/start?platform=blogger — kick off OAuth consent flow
+// Loopback-only: this is an ops action that initiates a credential-binding
+// flow on the operator's behalf. /callback stays open (Google must reach it;
+// the state cookie + one-shot Map provides CSRF protection).
+router.get('/api/auth/google/start', loopbackOnly, asyncRoute(async (req, res) => {
+  if (!isOAuthConfigured()) {
+    return res.status(503).json({
+      error: 'Google OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID, ' +
+        'GOOGLE_OAUTH_CLIENT_SECRET, and OAUTH_REDIRECT_URI in .env.',
+    });
+  }
+
+  const platform = String(req.query.platform || '').toLowerCase();
+  const config = OAUTH_PLATFORM_REGISTRY[platform];
+  if (!config) {
+    return res.status(400).json({
+      error: `Unknown OAuth platform: ${platform}. Supported: ${Object.keys(OAUTH_PLATFORM_REGISTRY).join(', ')}`,
+    });
+  }
+  const scopes = config.scopes;
+
+  pruneExpiredStates();
+  if (pendingStates.size >= STATE_MAX_ENTRIES) {
+    logger.warn(`[OAuth] pendingStates at cap (${STATE_MAX_ENTRIES}); rejecting /start`);
+    return res.status(429).json({
+      error: 'Too many concurrent OAuth flows. Please retry shortly.',
+    });
+  }
+  const state = crypto.randomBytes(32).toString('hex');
+  pendingStates.set(state, { platform, expiresAt: Date.now() + STATE_TTL_MS });
+
+  const url = generateAuthUrl(state, scopes);
+  logger.info(`[OAuth] Starting flow for ${platform}, redirecting to Google`);
+  res.redirect(url);
+}));
+
+// GET /api/auth/google/callback — Google redirects here after consent.
+// Every terminal outcome redirects to /admin.html so the user lands back in
+// the UI rather than on a raw JSON page. Failure modes carry a stable
+// short error code as ?oauth_error= (full message goes to logs only).
+function oauthErrorRedirect(res: Res, code: string) {
+  return res.redirect(`/admin.html?oauth_error=${encodeURIComponent(code)}`);
+}
+
+router.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
+  const { code, state, error: oauthError } = req.query;
 
   if (oauthError) {
-    logger.warn(`[Auth] Google OAuth denied: ${oauthError}`);
-    return res.status(400).send(`<h2>Authorization denied</h2><p>${oauthError}</p>`);
+    logger.warn(`[OAuth] User denied or error: ${oauthError}`);
+    // If state was sent alongside an error, clean it up so the Map doesn't
+    // hold dead entries until TTL.
+    if (typeof state === 'string') pendingStates.delete(state);
+    return oauthErrorRedirect(res, String(oauthError).slice(0, 64));
   }
-  if (!code) {
-    return res.status(400).send('<h2>Missing authorization code</h2>');
+
+  if (typeof code !== 'string' || typeof state !== 'string') {
+    return oauthErrorRedirect(res, 'missing_code_or_state');
+  }
+
+  pruneExpiredStates();
+  const pending = pendingStates.get(state);
+  if (!pending) {
+    return oauthErrorRedirect(res, 'invalid_state');
+  }
+  // One-shot: delete immediately to prevent replay
+  pendingStates.delete(state);
+
+  if (pending.expiresAt < Date.now()) {
+    return oauthErrorRedirect(res, 'state_expired');
   }
 
   try {
-    const oauth2Client = buildOAuth2Client();
-    const { tokens } = await oauth2Client.getToken(code);
-
-    if (!tokens.refresh_token) {
-      return res.status(400).send(
-        '<h2>No refresh token received.</h2><p>Revoke app access in your Google Account and try again to force a new consent.</p>'
-      );
-    }
-
-    oauthTokens.upsert(db, 'blogger', {
-      access_token: tokens.access_token ?? null,
+    const tokens = await exchangeCodeForTokens(code);
+    oauthTokens.save(db, pending.platform, {
       refresh_token: tokens.refresh_token,
-      expires_at: tokens.expiry_date ?? null,
+      access_token: tokens.access_token ?? null,
+      expires_at: tokens.expires_at ?? null,
     });
-
-    logger.info('[Auth] Google OAuth tokens saved for Blogger');
-    res.send('<h2>Blogger authorized successfully.</h2><p>You can close this tab and return to the app.</p>');
-  } catch (err: any) {
-    logger.error('[Auth] Google OAuth callback failed', err);
-    res.status(500).send(`<h2>Authorization failed</h2><p>${err.message}</p>`);
+    logger.info(`[OAuth] ${pending.platform} connected successfully`);
+    res.redirect(`/admin.html?connected=${encodeURIComponent(pending.platform)}`);
+  } catch (e: any) {
+    // Log full message server-side; surface only a short stable code in URL
+    // so error.message never leaks into URL/history/referrer logs.
+    logger.error(`[OAuth] Token exchange failed: ${e?.message || e}`);
+    const code = /refresh_token/i.test(e?.message || '') &&
+                 /(no |did not return|missing)/i.test(e?.message || '')
+      ? 'no_refresh_token'
+      : 'exchange_failed';
+    oauthErrorRedirect(res, code);
   }
-});
+}));
 
-// GET /api/auth/google/status — check if Blogger OAuth token is stored
-router.get('/api/auth/google/status', (_req: Request, res: Response) => {
-  const token = oauthTokens.get(db, 'blogger');
+// DELETE /api/auth/oauth/:platform — disconnect (clear stored tokens).
+// Loopback-only: anyone able to hit this can break a connected operator's
+// publishing pipeline by revoking their OAuth row.
+router.delete('/api/auth/oauth/:platform', loopbackOnly, asyncRoute(async (req, res) => {
+  const platform = String(req.params.platform).toLowerCase();
+  if (!OAUTH_PLATFORM_REGISTRY[platform]) {
+    return res.status(400).json({ ok: false, error: `Unknown OAuth platform: ${platform}` });
+  }
+  oauthTokens.delete(db, platform);
+  logger.info(`[OAuth] Disconnected ${platform}`);
+  res.json({ ok: true, platform });
+}));
+
+// Test-only state inspection helpers. Exported unconditionally because the
+// production server already trusts in-process imports — these only clear the
+// CSRF state Map (equivalent to a process restart for the OAuth flow).
+export const __test = {
+  clearPendingStates: () => pendingStates.clear(),
+  pendingStatesSize: () => pendingStates.size,
+};
+
+// GET /api/auth/google/status?platform=blogger — lightweight connection probe
+// (additive endpoint kept from the upstream branch's parallel work; complements
+// /api/platforms by exposing only the OAuth-status fields).
+router.get('/api/auth/google/status', (req, res) => {
+  const platform = String(req.query.platform || 'blogger').toLowerCase();
+  const token = oauthTokens.get(db, platform);
   res.json({
+    platform,
     connected: !!token,
     expires_at: token?.expires_at ?? null,
   });

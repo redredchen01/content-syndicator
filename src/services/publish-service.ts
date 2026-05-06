@@ -3,6 +3,8 @@ import { allAdapters } from '../adapters';
 import { updateTaskProgress, getTaskProgress, savePost } from '../db/index';
 import { appendToSheet } from '../sheets';
 import { logger, randomSleep } from '../utils/logger';
+import { CONCURRENCY_CONFIG } from '../constants';
+import { runParallel } from '../utils/parallel';
 
 export interface PublishOptions {
   sourceUrl: string;
@@ -92,39 +94,50 @@ export async function publishToPlatforms(
     results.push(...apiResults);
   }
 
-  // Browser platforms — publish sequentially with sleep between
+  // Browser platforms — publish with controlled concurrency (capped at BROWSER_MAX_TABS)
   if (browserAdapters.length > 0) {
-    logger.info(`Sequentially publishing to ${browserAdapters.length} browser platform(s)...`);
-    for (let i = 0; i < browserAdapters.length; i++) {
-      const adapter = browserAdapters[i];
-      try {
-        const result = await adapter.publish({
-          title: options.title,
-          markdownContent: options.content,
-          tags: options.tags,
-          excerpt: options.excerpt,
-          originalUrl: buildUtmUrl(options.sourceUrl, adapter.name),
-          publishStatus,
-        });
-        results.push(result);
-        if (result.success) {
-          logger.info(`[${adapter.name}] Published: ${result.publishedUrl}`);
-          updateTaskProgress(options.sourceUrl, adapter.name, 'success');
-        } else {
-          updateTaskProgress(options.sourceUrl, adapter.name, 'failed', result.error);
+    const concurrency = CONCURRENCY_CONFIG.BROWSER_MAX_TABS;
+    logger.info(`Publishing to ${browserAdapters.length} browser platform(s) with concurrency=${concurrency}...`);
+    const browserResults = await runParallel(
+      browserAdapters,
+      async adapter => {
+        try {
+          const result = await adapter.publish({
+            title: options.title,
+            markdownContent: options.content,
+            tags: options.tags,
+            excerpt: options.excerpt,
+            originalUrl: buildUtmUrl(options.sourceUrl, adapter.name),
+            publishStatus,
+          });
+          if (result.success) {
+            logger.info(`[${adapter.name}] Published: ${result.publishedUrl}`);
+            updateTaskProgress(options.sourceUrl, adapter.name, 'success');
+          } else {
+            logger.warn(`[${adapter.name}] Failed: ${result.error}`);
+            updateTaskProgress(options.sourceUrl, adapter.name, 'failed', result.error);
+          }
+          return result;
+        } catch (error: any) {
+          logger.error(`[${adapter.name}] Unexpected error`, error);
+          updateTaskProgress(options.sourceUrl, adapter.name, 'failed', error.message);
+          return { platform: adapter.name, success: false, error: error.message };
         }
-      } catch (error: any) {
-        logger.error(`[${adapter.name}] Unexpected error`, error);
-        updateTaskProgress(options.sourceUrl, adapter.name, 'failed', error.message);
-        results.push({ platform: adapter.name, success: false, error: error.message });
+      },
+      concurrency,
+    );
+    // Extract successful results from ParallelResult wrapper
+    browserResults.forEach((result, index) => {
+      if (result.ok) {
+        results.push(result.value);
+      } else {
+        results.push({
+          platform: browserAdapters[index]?.name || 'unknown',
+          success: false,
+          error: result.error.message,
+        });
       }
-
-      if (i < browserAdapters.length - 1) {
-        const sleepMs = 5000 + Math.floor(Math.random() * 10000);
-        logger.info(`Sleeping ${sleepMs}ms before next browser platform...`);
-        await randomSleep(sleepMs, sleepMs);
-      }
-    }
+    });
   }
 
   savePost(options.sourceUrl, options.title, options.content, results);

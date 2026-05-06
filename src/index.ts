@@ -7,7 +7,12 @@ import { handleLivenessJob } from './services/queue/liveness-worker';
 import { handleDailyDigestJob, seedDailyDigest } from './services/queue/digest-job';
 import { handleAggregateSheets, handleReconciliation, seedSheetsJobs } from './services/queue/sheets-jobs';
 import { validateAllCredentials } from './services/credential-validator';
+import { validateEncryptionKey } from './utils/encryption';
 import { logger } from './utils/logger';
+
+// Refuse to start in production when ENCRYPTION_KEY is unset/default — this
+// key protects oauth_tokens.refresh_token and api_keys_encrypted at rest.
+validateEncryptionKey();
 
 const PORT = process.env.PORT || 3000;
 

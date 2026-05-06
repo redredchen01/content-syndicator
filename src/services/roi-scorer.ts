@@ -89,9 +89,9 @@ export function getDaTierConfig(db: Database.Database): DaTierConfig {
       threshold,
     };
   } catch (err) {
-    logger.warn('[ROI] Failed to read DA tier config; falling back to defaults', {
-      message: err instanceof Error ? err.message : String(err),
-    });
+    logger.warn(
+      `[ROI] Failed to read DA tier config; falling back to defaults: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return { tiers: { ...DEFAULT_DA_TIERS }, threshold: DEFAULT_ROI_THRESHOLD };
   }
 }
@@ -219,7 +219,7 @@ export function filterByRoi(
     return { eligible, skipped, roiScores, engineStatus: 'ok' };
   } catch (err) {
     // fail-soft: use DA tier × 1.0 for all platforms, keeps low-DA filtered
-    logger.warn('[ROI] scorer error — falling back to DA tier scoring', { err });
+    logger.warn(`[ROI] scorer error — falling back to DA tier scoring: ${err instanceof Error ? err.message : String(err)}`);
     try {
       const config = getDaTierConfig(db);
       const roiScores = new Map<string, number>();
