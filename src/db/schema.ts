@@ -278,4 +278,10 @@ export function applyV2Schema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_variant_cache_brand_expires
       ON variant_cache(brand_id, expires_at)
   `);
+
+  // Index for batch queries by brand and status (Unit 6)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_draft_batches_brand_status
+      ON draft_batches(brand_id, status)
+  `);
 }
