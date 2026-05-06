@@ -500,6 +500,75 @@
     $('api-key-status').textContent = '';
   }
 
+  // ── 1-Click Connect for browser platforms ─────────────────────────────────
+  const MIN_AUTH_COOKIES = 5;
+  const POLL_INTERVAL_MS = 2000;
+  const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  const activePollers = {}; // platformId → intervalId
+
+  async function startBrowserLogin(platformId) {
+    const btn = document.getElementById(`browser-btn-${platformId}`);
+    const badge = document.getElementById(`browser-badge-${platformId}`);
+    if (!btn) return;
+
+    const loginStartedAt = Date.now();
+    btn.disabled = true;
+    btn.textContent = '浏览器已打开，请登录...';
+    if (badge) { badge.textContent = '登录中…'; badge.className = 'text-xs px-2 py-1 rounded bg-yellow-50 text-yellow-700'; }
+
+    try {
+      const res = await fetch('/api/auth/browser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platformId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        btn.disabled = false;
+        btn.textContent = '1-Click Connect';
+        if (badge) { badge.textContent = '连接失败'; badge.className = 'text-xs px-2 py-1 rounded bg-red-50 text-red-700'; }
+        const hint = res.status === 403
+          ? '请先在 .env 设置 ENABLE_BROWSER_AUTOMATION=true'
+          : (data.error || '启动失败，请重试');
+        alert(hint);
+        return;
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = '1-Click Connect';
+      alert('网络错误：' + err.message);
+      return;
+    }
+
+    // Stop any existing poller for this platform
+    if (activePollers[platformId]) clearInterval(activePollers[platformId]);
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+    activePollers[platformId] = setInterval(async () => {
+      if (Date.now() > deadline) {
+        clearInterval(activePollers[platformId]);
+        delete activePollers[platformId];
+        btn.disabled = false;
+        btn.textContent = '1-Click Connect';
+        if (badge) { badge.textContent = '超时未完成'; badge.className = 'text-xs px-2 py-1 rounded bg-red-50 text-red-700'; }
+        alert('超时（5分钟）未检测到登录完成。请关闭浏览器窗口后重试。');
+        return;
+      }
+
+      try {
+        const s = await fetch(`/api/auth/browser/status/${platformId}`).then(r => r.json());
+        if (s.exists && s.mtime > loginStartedAt && s.cookieCount >= MIN_AUTH_COOKIES) {
+          clearInterval(activePollers[platformId]);
+          delete activePollers[platformId];
+          btn.disabled = false;
+          btn.textContent = '重新连接';
+          if (badge) { badge.textContent = '✅ 已连接'; badge.className = 'text-xs px-2 py-1 rounded bg-green-50 text-green-700'; }
+          platformsCacheTime = 0; // invalidate cache
+        }
+      } catch { /* network hiccup, keep polling */ }
+    }, POLL_INTERVAL_MS);
+  }
+
   $('quick-add-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const platformId = $('platform-select').value;
@@ -575,27 +644,36 @@
       const platformSelect = $('platform-select');
 
       container.innerHTML = data.platforms.map(p => {
-        const statusColor = p.connected ? 'text-green-600' : 'text-red-600';
         const statusText = p.connected ? '已连接' : p.reason;
         const isDefault = data.defaults.includes(p.name);
+        const badgeClass = p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700';
+
+        const actionBtn = p.browserAutomation
+          ? `<button type="button" id="browser-btn-${p.id}"
+                     class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                     onclick="startBrowserLogin('${p.id}')">
+               ${p.connected ? '重新连接' : '1-Click Connect'}
+             </button>`
+          : `<button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
+                     onclick="openApiKeyForm('${p.id}', '${p.name}')">
+               ${p.connected ? '更新' : '连接'}
+             </button>`;
 
         return `
           <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
             <div class="flex-1">
               <div class="flex items-center gap-2 mb-1">
                 <span class="font-medium text-sm">${p.name}</span>
-                <span class="text-xs px-2 py-1 rounded ${p.connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
+                <span id="browser-badge-${p.id}" class="text-xs px-2 py-1 rounded ${badgeClass}">
                   ${statusText}
                 </span>
+                ${p.browserAutomation ? '<span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-500">浏览器</span>' : ''}
                 ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
               </div>
               ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
               ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
             </div>
-            <button type="button" class="ml-2 px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50"
-                    onclick="openApiKeyForm('${p.id}', '${p.name}')">
-              ${p.connected ? '更新' : '连接'}
-            </button>
+            ${actionBtn}
           </div>
         `;
       }).join('');

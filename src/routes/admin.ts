@@ -25,13 +25,15 @@ export const router = express.Router();
 
 // Data-driven connectivity check — add new platforms here only
 const API_CONNECTED: Record<string, () => boolean> = {
-  'Telegra.ph': () => true,
-  'Dev.to':     () => Boolean(process.env.DEVTO_API_KEY),
-  'Medium':     () => Boolean(process.env.MEDIUM_INTEGRATION_TOKEN),
-  'Hashnode':   () => Boolean(process.env.HASHNODE_TOKEN && process.env.HASHNODE_PUBLICATION_ID),
-  'GitHub':     () => Boolean(process.env.GITHUB_TOKEN),
-  'Blogger':    () => Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && process.env.BLOGGER_BLOG_ID),
-  'WordPress':  () => Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD),
+  'Telegra.ph':  () => true,
+  'Dev.to':      () => Boolean(process.env.DEVTO_API_KEY),
+  'Medium':      () => Boolean(process.env.MEDIUM_INTEGRATION_TOKEN),
+  'Hashnode':    () => Boolean(process.env.HASHNODE_TOKEN && process.env.HASHNODE_PUBLICATION_ID),
+  'GitHub':      () => Boolean(process.env.GITHUB_TOKEN),
+  'Blogger':     () => Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && process.env.BLOGGER_BLOG_ID),
+  'WordPress':   () => Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD),
+  'Twitter':     () => Boolean(process.env.TWITTER_CONSUMER_KEY && process.env.TWITTER_CONSUMER_SECRET && process.env.TWITTER_ACCESS_TOKEN && process.env.TWITTER_ACCESS_TOKEN_SECRET),
+  'Instapaper':  () => Boolean(process.env.INSTAPAPER_USERNAME && process.env.INSTAPAPER_PASSWORD),
 };
 
 function hasStoredApiKey(platformId: string): boolean {
@@ -153,13 +155,24 @@ router.post('/api/auth/browser', async (req, res) => {
   const { platform } = req.body;
   const adapter: any = allAdapters.find(a => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === platform);
 
-  let loginUrl = '';
-  if (platform === 'medium') loginUrl = 'https://medium.com/m/signin';
-  else if (platform === 'devto') loginUrl = 'https://dev.to/enter';
-  else if (platform === 'google' || platform === 'blogger') loginUrl = 'https://accounts.google.com/';
-  else if (adapter && adapter.config && adapter.config.composeUrl) {
-    loginUrl = adapter.config.composeUrl;
-  } else {
+  const loginUrlMap: Record<string, string> = {
+    'medium':           'https://medium.com/m/signin',
+    'devto':            'https://dev.to/enter',
+    'google':           'https://accounts.google.com/',
+    'blogger':          'https://accounts.google.com/',
+    'substack':         'https://substack.com/sign-in',
+    'indiehackers':     'https://www.indiehackers.com/sign-in',
+    'quora':            'https://www.quora.com/',
+    'producthunt':      'https://www.producthunt.com/login',
+    'ztndz':            'https://ztndz.com/login',
+    'yoursocialpeople': 'https://yoursocialpeople.com/login',
+    'zopedirectory':    'https://www.zopedirectory.com/login',
+    'zeddirectory':     'https://www.zed-directory.com/login',
+    'youslade':         'https://youslade.com/login',
+  };
+
+  const loginUrl = loginUrlMap[platform] ?? (adapter?.config?.composeUrl ?? '');
+  if (!loginUrl) {
     const platformName = adapter?.name || platform;
     return res.status(400).json({
       error: `${platformName} does not support browser OAuth in this app. Configure it in Publishing Platforms with its API token/application password instead.`
@@ -246,6 +259,36 @@ router.post('/api/auth/test', async (req, res) => {
   }
 });
 
+// GET /api/auth/browser/status/:platform — lightweight poll for login completion
+// Returns { exists, cookieCount, mtime } without launching a browser.
+// Frontend uses cookieCount >= MIN_AUTH_COOKIES as the "logged-in" signal.
+const MIN_AUTH_COOKIES = 5;
+
+router.get('/api/auth/browser/status/:platform', syncRoute((req, res) => {
+  const cleanId = String(req.params.platform).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const authFile = path.join(AUTH_DIR, `${cleanId}.json`);
+
+  try {
+    const stat = fs.statSync(authFile);
+    const raw = fs.readFileSync(authFile, 'utf-8');
+    let cookieCount = 0;
+    try {
+      const parsed = JSON.parse(raw);
+      cookieCount = Array.isArray(parsed.cookies) ? parsed.cookies.length : 0;
+    } catch { /* malformed JSON, cookieCount stays 0 */ }
+
+    res.json({
+      exists: true,
+      cookieCount,
+      minAuthCookies: MIN_AUTH_COOKIES,
+      mtime: stat.mtimeMs,
+      platform: cleanId,
+    });
+  } catch {
+    res.json({ exists: false, cookieCount: 0, minAuthCookies: MIN_AUTH_COOKIES, mtime: null, platform: cleanId });
+  }
+}));
+
 // PATCH /api/platforms/:platformId/api-key — update and validate API key
 router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
   try {
@@ -266,14 +309,17 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
 
     // Validate API key by calling testConnection() with the new key.
     // Map platformId to the environment variable it reads from.
-    const envKeyMap: Record<string, string> = {
-      'devto': 'DEVTO_API_KEY',
-      'medium': 'MEDIUM_INTEGRATION_TOKEN',
-      'hashnode': 'HASHNODE_TOKEN',
-      'github': 'GITHUB_TOKEN',
-      'blogger': 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-      'wordpress': 'WORDPRESS_SITE_URL',
-      'telegraph': 'TELEGRA_PH_TOKEN',
+    // Twitter uses 4 env vars — apiKey must be JSON: {"ck":...,"cs":...,"at":...,"as":...}
+    const envKeyMap: Record<string, string | string[]> = {
+      'devto':       'DEVTO_API_KEY',
+      'medium':      'MEDIUM_INTEGRATION_TOKEN',
+      'hashnode':    'HASHNODE_TOKEN',
+      'github':      'GITHUB_TOKEN',
+      'blogger':     'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+      'wordpress':   'WORDPRESS_SITE_URL',
+      'telegraph':   'TELEGRA_PH_TOKEN',
+      'twitter':     ['TWITTER_CONSUMER_KEY','TWITTER_CONSUMER_SECRET','TWITTER_ACCESS_TOKEN','TWITTER_ACCESS_TOKEN_SECRET'],
+      'instapaper':  'INSTAPAPER_USERNAME',
     };
 
     const envVar = envKeyMap[platformId];
@@ -281,21 +327,39 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
       return res.status(404).json({ error: 'Cannot validate this platform type' });
     }
 
-    const prevValue = process.env[envVar]; // capture before overwriting
-    process.env[envVar] = apiKey;
+    // For multi-key platforms (Twitter), apiKey is a JSON object string
+    const prevValues: Record<string, string | undefined> = {};
+    if (Array.isArray(envVar)) {
+      let parsed: Record<string, string>;
+      try { parsed = JSON.parse(apiKey); } catch {
+        return res.status(400).json({ error: 'Twitter requires a JSON object with ck, cs, at, as keys' });
+      }
+      const [ck, cs, at, as_] = envVar;
+      prevValues[ck] = process.env[ck]; prevValues[cs] = process.env[cs];
+      prevValues[at] = process.env[at]; prevValues[as_] = process.env[as_];
+      process.env[ck] = parsed.ck; process.env[cs] = parsed.cs;
+      process.env[at] = parsed.at; process.env[as_] = parsed.as;
+    } else {
+      prevValues[envVar] = process.env[envVar];
+      process.env[envVar] = apiKey;
+    }
+
+    const restoreEnv = () => {
+      for (const [k, v] of Object.entries(prevValues)) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+    };
 
     let testResult: Awaited<ReturnType<NonNullable<typeof adapter.testConnection>>> | undefined;
     try {
       testResult = await adapter.testConnection?.();
     } catch (e: any) {
-      // Restore on unexpected throw; on validation failure we restore below too
-      if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
-      throw e; // re-throw so asyncRoute returns 500
+      restoreEnv();
+      throw e;
     }
 
     if (testResult && !testResult.ok) {
-      // Validation failed — restore the previous key so process.env stays clean
-      if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
+      restoreEnv();
       logger.warn(`[Admin] API key validation failed for ${adapter.name}: ${testResult.error}`);
       return res.status(422).json({ ok: false, error: testResult.error });
     }
@@ -420,14 +484,16 @@ router.post('/api/platforms/batch-validate', async (req, res) => {
 
         logger.info(`[Admin] Testing API key for ${adapter.name}...`);
 
-        const envKeyMap: Record<string, string> = {
-          'devto': 'DEVTO_API_KEY',
-          'medium': 'MEDIUM_INTEGRATION_TOKEN',
-          'hashnode': 'HASHNODE_TOKEN',
-          'github': 'GITHUB_TOKEN',
-          'blogger': 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-          'wordpress': 'WORDPRESS_SITE_URL',
-          'telegraph': 'TELEGRA_PH_TOKEN',
+        const envKeyMap: Record<string, string | string[]> = {
+          'devto':      'DEVTO_API_KEY',
+          'medium':     'MEDIUM_INTEGRATION_TOKEN',
+          'hashnode':   'HASHNODE_TOKEN',
+          'github':     'GITHUB_TOKEN',
+          'blogger':    'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+          'wordpress':  'WORDPRESS_SITE_URL',
+          'telegraph':  'TELEGRA_PH_TOKEN',
+          'twitter':    ['TWITTER_CONSUMER_KEY','TWITTER_CONSUMER_SECRET','TWITTER_ACCESS_TOKEN','TWITTER_ACCESS_TOKEN_SECRET'],
+          'instapaper': 'INSTAPAPER_USERNAME',
         };
 
         const envVar = envKeyMap[platformId];
@@ -435,18 +501,34 @@ router.post('/api/platforms/batch-validate', async (req, res) => {
           return { platformId, ok: false, error: 'Cannot validate this platform type' };
         }
 
-        // Batch-validate only tests — always restore the original value afterward.
-        const prevValue = process.env[envVar];
-        process.env[envVar] = apiKey;
+        // Batch-validate only tests — always restore the original values afterward.
+        const saved: Record<string, string | undefined> = {};
+        const restore = () => {
+          for (const [k, v] of Object.entries(saved)) {
+            if (v === undefined) delete process.env[k]; else process.env[k] = v;
+          }
+        };
+
+        if (Array.isArray(envVar)) {
+          let parsed: Record<string, string>;
+          try { parsed = JSON.parse(apiKey); } catch {
+            return { platformId, ok: false, error: 'Twitter requires JSON with ck, cs, at, as' };
+          }
+          const [ck, cs, at, as_] = envVar;
+          saved[ck] = process.env[ck]; saved[cs] = process.env[cs];
+          saved[at] = process.env[at]; saved[as_] = process.env[as_];
+          process.env[ck] = parsed.ck; process.env[cs] = parsed.cs;
+          process.env[at] = parsed.at; process.env[as_] = parsed.as;
+        } else {
+          saved[envVar] = process.env[envVar];
+          process.env[envVar] = apiKey;
+        }
+
         try {
           const testResult = await adapter.testConnection?.();
-          return {
-            platformId,
-            ok: testResult?.ok ?? true,
-            error: testResult?.error,
-          };
+          return { platformId, ok: testResult?.ok ?? true, error: testResult?.error };
         } finally {
-          if (prevValue === undefined) delete process.env[envVar]; else process.env[envVar] = prevValue;
+          restore();
         }
       }),
     );

@@ -1,9 +1,7 @@
 import path from 'path';
 import fs from 'fs';
-import { Readable } from 'stream';
 import { chromium } from 'playwright';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { Extract } = require('unzipper') as { Extract: (opts: { path: string }) => NodeJS.WritableStream };
+import * as unzipper from 'unzipper';
 import { acquirePage } from '../utils/browserManager';
 import { PlatformAdapter } from '../adapters/base';
 import { allAdapters } from '../adapters';
@@ -104,86 +102,47 @@ export interface ImportSessionsResult {
 export async function importSessions(zipBuffer: Buffer): Promise<ImportSessionsResult> {
   const result: ImportSessionsResult = { imported: [], failed: [], tested: {} };
 
-  // Build a map of valid platform IDs
   const validPlatformIds = new Set(allAdapters.map(adapter => getAdapterId(adapter)));
 
-  return new Promise((resolve, reject) => {
-    const entries: Array<{ fileName: string; content: string }> = [];
-    let processingError: Error | null = null;
+  // Open ZIP buffer without extracting to disk — avoids .auth/.auth/ nesting bug
+  const directory = await unzipper.Open.buffer(zipBuffer);
 
-    Readable.from([zipBuffer])
-      .pipe(Extract({ path: AUTH_DIR }))
-      .on('entry', (entry) => {
-        const fileName = entry.path;
+  for (const entry of directory.files) {
+    if (entry.type !== 'File') continue;
 
-        // Only process files in .auth/ directory with .json extension
-        if (!fileName.startsWith('.auth/') || !fileName.endsWith('.json')) {
-          entry.autodrain();
-          return;
-        }
+    // Normalize path: strip any directory prefix, keep only the filename
+    const basename = path.basename(entry.path);
+    if (!basename.endsWith('.json')) continue;
 
-        let content = '';
-        entry.on('data', (chunk: Buffer) => {
-          content += chunk.toString();
-        });
+    const platformId = basename.slice(0, -5); // strip ".json"
 
-        entry.on('end', () => {
-          entries.push({ fileName, content });
-        });
+    if (!validPlatformIds.has(platformId)) {
+      result.failed.push({ platform: platformId, error: 'Unknown platform' });
+      continue;
+    }
 
-        entry.on('error', (err: Error) => {
-          if (!processingError) processingError = err;
-        });
-      })
-      .on('error', (err: Error) => {
-        if (!processingError) processingError = err;
-      })
-      .on('finish', async () => {
-        // Process all entries after extraction is done
-        if (processingError) {
-          reject(processingError);
-          return;
-        }
+    try {
+      const content = (await entry.buffer()).toString('utf-8');
+      const json = JSON.parse(content);
 
-        try {
-          for (const { fileName, content } of entries) {
-            const platformId = fileName.replace('.auth/', '').replace('.json', '');
+      if (!Array.isArray(json.cookies) || !Array.isArray(json.origins)) {
+        result.failed.push({ platform: platformId, error: 'Invalid session format: missing cookies or origins' });
+        continue;
+      }
 
-            // Validate platform ID
-            if (!validPlatformIds.has(platformId)) {
-              result.failed.push({ platform: platformId, error: 'Unknown platform' });
-              continue;
-            }
+      if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+      fs.writeFileSync(path.join(AUTH_DIR, `${platformId}.json`), content, 'utf-8');
+      result.imported.push(platformId);
 
-            try {
-              const json = JSON.parse(content);
+      const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
+      if (adapter) {
+        const testResult = await adapter.testConnection?.();
+        if (testResult) result.tested[platformId] = testResult;
+      }
+    } catch (e: any) {
+      result.failed.push({ platform: platformId, error: `Invalid JSON: ${e.message}` });
+    }
+  }
 
-              // Validate basic structure (cookies and origins arrays)
-              if (!Array.isArray(json.cookies) || !Array.isArray(json.origins)) {
-                result.failed.push({ platform: platformId, error: 'Invalid session format: missing cookies or origins' });
-                continue;
-              }
-
-              // Write to .auth directory
-              const outputPath = path.join(AUTH_DIR, `${platformId}.json`);
-              fs.writeFileSync(outputPath, content, 'utf-8');
-              result.imported.push(platformId);
-
-              // Test connection for imported platform
-              const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
-              if (adapter) {
-                const testResult = await adapter.testConnection?.();
-                if (testResult) result.tested[platformId] = testResult;
-              }
-            } catch (e: any) {
-              result.failed.push({ platform: platformId, error: `Invalid JSON: ${e.message}` });
-            }
-          }
-
-          resolve(result);
-        } catch (e) {
-          reject(e);
-        }
-      });
-  });
+  return result;
 }
