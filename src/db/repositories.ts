@@ -80,6 +80,8 @@ export interface PublishJob {
   metadata_json: string;
   created_at: string;
   updated_at: string;
+  /** ROI score (0.0–1.0) used for dequeue ordering. Default 0.0 for pre-ROI rows. */
+  priority: number;
 }
 
 export type LinkCheckType = 't24h' | 't7d' | 't30d';
@@ -257,6 +259,8 @@ export const publishJobs = {
       scheduled_at: string;
       payload?: unknown;
       metadata?: unknown;
+      /** ROI score written at dispatch time. Defaults to 0.0 (lowest priority). */
+      priority?: number;
     },
   ): number {
     // OR IGNORE makes (batch_id, variant_id, platform, job_type) UNIQUE
@@ -264,8 +268,8 @@ export const publishJobs = {
     const stmt = db.prepare(`
       INSERT OR IGNORE INTO publish_jobs (
         batch_id, variant_id, platform, job_type, payload_json,
-        scheduled_at, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        scheduled_at, metadata_json, priority
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       job.batch_id,
@@ -275,6 +279,7 @@ export const publishJobs = {
       JSON.stringify(job.payload ?? {}),
       job.scheduled_at,
       JSON.stringify(job.metadata ?? {}),
+      job.priority ?? 0.0,
     );
     return Number(result.lastInsertRowid);
   },
@@ -289,7 +294,7 @@ export const publishJobs = {
         .prepare(`
           SELECT * FROM publish_jobs
           WHERE status = 'scheduled' AND scheduled_at <= ?
-          ORDER BY scheduled_at ASC
+          ORDER BY priority DESC, scheduled_at ASC
           LIMIT ?
         `)
         .all(now, lim) as PublishJob[];
