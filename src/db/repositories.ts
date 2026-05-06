@@ -443,22 +443,50 @@ export const linkChecks = {
     return Number(result.lastInsertRowid);
   },
 
-  /** Returns survival rate for a check_type over the trailing N days. */
+  /**
+   * Returns survival rate for a check_type over the trailing N days.
+   * Pass an optional `platform` to scope the query to a single platform
+   * (used by the ROI scorer for per-platform scoring).
+   */
   survivalRate(
     db: Database.Database,
     checkType: LinkCheckType,
     sinceIso: string,
+    platform?: string,
   ): { total: number; alive: number; rate: number } {
+    const wherePlatform = platform ? 'AND platform = ?' : '';
+    const params: unknown[] = platform
+      ? [checkType, sinceIso, platform]
+      : [checkType, sinceIso];
     const row = db.prepare(`
       SELECT
         SUM(CASE WHEN classification IN ('alive','redirect_alive') THEN 1 ELSE 0 END) AS alive,
         COUNT(*) AS total
       FROM link_checks
-      WHERE check_type = ? AND checked_at >= ?
-    `).get(checkType, sinceIso) as { alive: number | null; total: number };
+      WHERE check_type = ? AND checked_at >= ? ${wherePlatform}
+    `).get(...params) as { alive: number | null; total: number };
     const alive = row.alive ?? 0;
     const total = row.total;
     return { total, alive, rate: total === 0 ? 0 : alive / total };
+  },
+
+  /**
+   * Returns the number of link_check records for a platform + check_type within
+   * the trailing window. Used by the ROI scorer to determine cold-start status
+   * (< 5 records → fall back to DA tier only).
+   */
+  survivalRecordCount(
+    db: Database.Database,
+    checkType: LinkCheckType,
+    platform: string,
+    sinceIso: string,
+  ): number {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS cnt
+      FROM link_checks
+      WHERE check_type = ? AND platform = ? AND checked_at >= ?
+    `).get(checkType, platform, sinceIso) as { cnt: number };
+    return row.cnt;
   },
 };
 
