@@ -44,6 +44,8 @@ export class BrowserAutomationAdapter extends BaseAdapter {
       return { ok: false, error: 'Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true to enable.' };
     }
 
+    const LOGIN_URL_RE = /\/login\b|\/sign[-_]?in\b|\/auth\b|\/account\/login/i;
+
     let context;
     let page;
     try {
@@ -51,7 +53,11 @@ export class BrowserAutomationAdapter extends BaseAdapter {
       context = await browser.newContext({ storageState: authFile });
       page = await acquirePage(context);
 
-      await page.goto(this.config.composeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await page.goto(this.config.composeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      if (LOGIN_URL_RE.test(page.url())) {
+        return { ok: false, error: 'Session expired — please re-authenticate via 1-Click Connect' };
+      }
       return { ok: true };
     } catch (error: any) {
       return { ok: false, error: `Failed to load session: ${error?.message ?? String(error)}` };
