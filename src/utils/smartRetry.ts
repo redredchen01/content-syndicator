@@ -230,6 +230,10 @@ export async function smartRetry<T>(
       return result;
     } catch (error: any) {
       lastError = error;
+
+      // Caller marked this error as non-retryable (e.g. quota exhausted) — propagate immediately
+      if (error?.__skipRetry) throw error;
+
       const errorType = classifyError(error);
       const strategy = strategies[errorType];
       const maxAttempts = options?.maxAttemptsOverride || strategy.maxAttempts;

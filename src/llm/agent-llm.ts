@@ -84,25 +84,26 @@ async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMR
   // safetySettings imported from ./client (shared with llm/index.ts)
 
   return await retryOperation(async () => {
-    const result = await model.generateContent({
-      contents,
-      safetySettings,
-      generationConfig: {
-        temperature: options.temperature ?? 0.7,
-        maxOutputTokens: options.maxTokens,
-        // Note: Gemini Function Calling support would go here
-        // This is a simplified version
-      },
-    });
+    try {
+      const result = await model.generateContent({
+        contents,
+        safetySettings,
+        generationConfig: {
+          temperature: options.temperature ?? 0.7,
+          maxOutputTokens: options.maxTokens,
+        },
+      });
 
-    const text = result.response.text();
-
-    logger.warn('[LLM] Gemini function calling not implemented, tool_calls will be empty');
-    return {
-      content: text,
-      tool_calls: [],
-      raw: result,
-    };
+      const text = result.response.text();
+      logger.warn('[LLM] Gemini function calling not implemented, tool_calls will be empty');
+      return { content: text, tool_calls: [], raw: result };
+    } catch (e: any) {
+      // Quota exhausted (429) won't recover by retrying — skip straight to provider fallback
+      if (e?.status === 429 || (e?.message || '').includes('Too Many Requests')) {
+        e.__skipRetry = true;
+      }
+      throw e;
+    }
   }, RETRY_CONFIG.MAX_ATTEMPTS);
 }
 
