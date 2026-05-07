@@ -404,7 +404,7 @@ src/
 
 ---
 
-- [ ] **Unit 6: Extract `services/publish/generation.ts` + `services/publish/dispatch.ts`**
+- [x] **Unit 6: Extract `services/publish/generation.ts` + `services/publish/dispatch.ts`**
 
 **Goal:** 把 v1 端點業務邏輯（含 `runPublishingTask` 與 `processBulkQueue` 兩個 module-level async function）搬入 service。
 
