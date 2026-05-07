@@ -64,3 +64,19 @@ export type {
   UpdateRoiConfigInput,
   UpdateRoiConfigResult,
 } from './roi-config';
+
+// browser-auth (Unit 2)
+export {
+  MIN_AUTH_COOKIES,
+  getBrowserSessionStatus,
+  prepareBrowserLogin,
+  beginBrowserLoginSession,
+  prepareBrowserTest,
+  beginBrowserTestSession,
+} from './browser-auth';
+
+export type {
+  BrowserSessionStatus,
+  PreparedSession,
+  PrepareResult,
+} from './browser-auth';
