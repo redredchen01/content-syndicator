@@ -164,6 +164,7 @@ async function syncSideEffects(
           platform: job.platform,
           anchor_text: anchor,
           target_url: variant.target_url,
+          is_tier2: variant.is_tier2 ?? false,
         });
       } catch (err: any) {
         logger.warn(`[PublishWorker] anchor_history insert failed: ${err.message}`);

@@ -154,6 +154,56 @@ describe('handlePublishJob', () => {
     db.close();
   });
 
+  it('writes is_tier2=1 when variant has is_tier2=true', async () => {
+    const db = makeDb();
+    const tier2Variant = makeVariant({
+      platform: 'Dev.to',
+      anchor_words: ['dev article'],
+      target_url: 'https://dev.to/user/some-post',
+      is_tier2: true,
+    });
+    const job = makeJob(tier2Variant, { attempts: 0 });
+
+    mockAdapter.publish.mockResolvedValue({
+      platform: 'Dev.to',
+      success: true,
+      publishedUrl: 'https://dev.to/article/123',
+    });
+
+    await handlePublishJob(job, db);
+
+    const rows = db
+      .prepare('SELECT is_tier2, target_url FROM anchor_history WHERE batch_id = ?')
+      .all('batch_123') as Array<{ is_tier2: number; target_url: string }>;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].is_tier2).toBe(1);
+    expect(rows[0].target_url).toBe('https://dev.to/user/some-post');
+    db.close();
+  });
+
+  it('writes is_tier2=0 for standard (non-tier-2) variant', async () => {
+    const db = makeDb();
+    const variant = makeVariant({ anchor_words: ['testbrand tool'] });
+    const job = makeJob(variant, { attempts: 0 });
+
+    mockAdapter.publish.mockResolvedValue({
+      platform: 'Dev.to',
+      success: true,
+      publishedUrl: 'https://dev.to/article/456',
+    });
+
+    await handlePublishJob(job, db);
+
+    const rows = db
+      .prepare('SELECT is_tier2 FROM anchor_history WHERE batch_id = ?')
+      .all('batch_123') as Array<{ is_tier2: number }>;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].is_tier2).toBe(0);
+    db.close();
+  });
+
   it('does NOT write anchor_history on retry (attempts > 0)', async () => {
     const db = makeDb();
     const variant = makeVariant({ anchor_words: ['testbrand tool'] });
