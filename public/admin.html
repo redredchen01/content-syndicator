@@ -712,6 +712,8 @@
           const startUrl = `/api/auth/${provider}/start?platform=${p.id}`;
           const tooltipEnv = provider === 'twitter'
             ? 'TWITTER_OAUTH_CLIENT_ID / TWITTER_OAUTH_CLIENT_SECRET / TWITTER_OAUTH_REDIRECT_URI'
+            : provider === 'instapaper'
+            ? 'INSTAPAPER_USERNAME / INSTAPAPER_PASSWORD'
             : 'GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / OAUTH_REDIRECT_URI';
           if (!p.oauthConfigured) {
             actionBtn = `<button type="button" disabled
