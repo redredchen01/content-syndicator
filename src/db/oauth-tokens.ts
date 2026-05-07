@@ -12,6 +12,25 @@
 import type Database from 'better-sqlite3';
 import { encryptApiKey, decryptApiKey } from '../utils/encryption';
 
+/**
+ * One row's worth of OAuth credentials. Two storage shapes co-exist:
+ *
+ *   - **Refreshable providers** (Google, Twitter): `refresh_token` is a real
+ *     long-lived refresh credential, `access_token` is short-lived and gets
+ *     rotated by the strategy.
+ *   - **Sentinel providers** (WordPress.com, GitHub OAuth Apps): the provider
+ *     does not issue refresh_tokens at all. To keep the schema's
+ *     `refresh_token NOT NULL` constraint satisfied without a migration, the
+ *     adapter writes the long-lived access_token into BOTH columns. Adapters
+ *     for these providers MUST NOT call a refresh endpoint with the stored
+ *     `refresh_token` — it is in fact an access_token and the provider's
+ *     token endpoint will reject it.
+ *
+ * WordPress additionally stores `JSON.stringify({token, site_id})` in the
+ * `access_token` column so the publish endpoint can resolve the target site
+ * without a schema change. See `parseWordPressToken` in
+ * src/services/wordpress-oauth.ts.
+ */
 export interface OAuthTokens {
   refresh_token: string;
   access_token?: string | null;

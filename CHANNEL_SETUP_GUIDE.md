@@ -347,3 +347,111 @@ OAUTH_ALLOW_REMOTE=true
 **OAuth 2.0 路径连不通，但有旧的 OAuth 1.0a keys**
 - 不删 `TWITTER_CONSUMER_KEY` 等环境变量，TwitterAdapter 会自动 fallback 到 OAuth 1.0a 路径
 - 旧 4-key 用户零迁移
+
+---
+
+## WordPress.com — OAuth 2.0 配置（推荐）
+
+WordPress.com 用户走 OAuth 一键连接；self-hosted 用户继续用 Application Password，无需迁移。Adapter 三级回退：OAuth → Application Password → 错误。
+
+### 5 分钟操作步骤
+
+1. 登录 [WordPress.com Apps](https://developer.wordpress.com/apps/) → **Create New Application**
+2. 填写：
+   - **Name**：你的应用名（任意）
+   - **Description**：可选
+   - **Website URL**：可填项目 URL 或本机 URL
+   - **Redirect URLs**：`http://localhost:3000/api/auth/wordpress/callback`（本地开发）
+   - **Type**：Web
+3. 保存 → 拷贝 **Client ID** 和 **Client Secret** 到 `.env`：
+   ```
+   WORDPRESS_OAUTH_CLIENT_ID=...
+   WORDPRESS_OAUTH_CLIENT_SECRET=...
+   WORDPRESS_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/wordpress/callback
+   ```
+4. 重启 server → admin.html 上 WordPress 卡片显示「Connect with WordPress.com」
+5. 点击 → WordPress.com 同意页 → 选要授权的博客（OAuth 后默认用 primary site_id）→ Approve → 回到 admin 显示 ✅ 已连接
+
+### 关键约束
+
+- **Redirect URL 必须完全匹配** — 任何 scheme / port / 尾斜杠差异都会被 WordPress.com 拒绝
+- **WordPress.com OAuth 不返回 refresh_token** — access_token 长期有效（除非用户在 [Connected Applications](https://wordpress.com/me/security/connected-applications) 撤销）。Adapter 内部用 sentinel 模式落库，无需手动 refresh
+- **OAuth 后默认用 primary blog** — 用户首次 OAuth 时同意页会让选博客；首版采用 token 响应中的 `blog_id`，多博客切换 UI 留 P3
+- **OAuth 优先于 Application Password** — 同时配置时 adapter 走 OAuth 路径；想强制走 self-hosted 时在 admin 页点 **断开** 清除 OAuth 行
+
+### 故障排查
+
+**「Connect with WordPress.com」按钮灰化**
+- 三个 env 变量没配齐（Client ID / Secret / Redirect URI）
+- 重启 server 才能让 `isConfigured()` 重新评估
+
+**「authorization_required」/ 401 错误**
+- access_token 已被用户撤销（或服务端策略主动清除）
+- adapter 自动清理 oauth_tokens.wordpress 行 → admin 页提示「请重新连接」
+
+**publish 后回 404 / blog not found**
+- `blog_id` 已失效（用户在 WordPress.com 删除了 site）
+- 在 admin 页点 **断开** → 重新 Connect → 选择新 site
+
+---
+
+## GitHub — OAuth 2.0 配置（推荐 Gist 发布）
+
+新接入用户走 OAuth；存量 `GITHUB_TOKEN` PAT 用户零迁移（adapter 优先 OAuth，其次 PAT）。
+
+### 5 分钟操作步骤
+
+1. 登录 GitHub → [Settings → Developer settings → OAuth Apps](https://github.com/settings/developers) → **New OAuth App**
+2. 填写：
+   - **Application name**：你的应用名（任意）
+   - **Homepage URL**：项目 URL 或 `http://localhost:3000`
+   - **Authorization callback URL**：`http://localhost:3000/api/auth/github/callback`
+3. **Register application** → 详情页点 **Generate a new client secret** → 拷贝
+4. 把 Client ID + Secret 写入 `.env`：
+   ```
+   GITHUB_OAUTH_CLIENT_ID=...
+   GITHUB_OAUTH_CLIENT_SECRET=...
+   GITHUB_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/github/callback
+   ```
+5. 重启 server → admin.html → GitHub 卡片显示「Connect with GitHub」
+6. 点击 → GitHub 同意页（仅请求 `gist` scope）→ Authorize → 回到 admin ✅
+
+### 关键约束
+
+- **scope 仅请求 `gist`** — Gist 发布的最小权限。后续若改用 repo PR 发布需加 `repo` scope（更高侵入性，需用户重新授权）
+- **不返回 refresh_token** — 同 WordPress.com，access_token 长期有效，sentinel 模式落库
+- **用户在同意页可勾掉 scope** — adapter 在 callback 时验证返回的 `scope` 含 `gist`，否则报 `oauth_error=insufficient_scope`，admin 提示「权限不足，请重新授权并勾选 gist」
+- **OAuth 优先于 PAT** — 已配 `GITHUB_TOKEN` 的用户在 OAuth 后会自动切到 OAuth 路径；想回退到 PAT 在 admin 页点 **断开**
+
+### 故障排查
+
+**「insufficient_scope」错误**
+- 同意页上用户取消了 gist 权限勾选
+- 解决：admin 页点 **重新授权** → 同意页确保 gist 勾上
+
+**「Bad credentials」/ 401**
+- 用户在 [Authorized OAuth Apps](https://github.com/settings/applications) 撤销了 app 授权
+- adapter 自动清理 oauth_tokens.github 行 → admin 页提示「请重新连接」
+- 若 `GITHUB_TOKEN` env 仍配置，下次 publish 自动 fallback 到 PAT 路径（无需重启）
+
+**「No OAuth App access available」**
+- GitHub 组织开启了 [OAuth App access restrictions](https://docs.github.com/en/organizations/managing-oauth-access-to-your-organizations-data) 但未授权此 app
+- 在组织设置中批准 app 后用户重新授权
+
+---
+
+## Tier 1 平台（Dev.to / Hashnode）— PAT 一键生成
+
+Dev.to / Hashnode 没有公开 OAuth API，仅支持 Personal Access Token (PAT)。admin.html 在每个卡片旁提供「**获取 API Key ↗**」link，新窗口直跳生成页：
+
+| 平台 | 生成页 |
+|------|------|
+| Dev.to | [https://dev.to/settings/extensions](https://dev.to/settings/extensions) |
+| Hashnode | [https://hashnode.com/settings/developer](https://hashnode.com/settings/developer) |
+
+操作流程：
+1. admin.html 平台卡片 → 点「获取 API Key ↗」→ 新窗口打开
+2. 在生成页按平台提示创建 token
+3. 复制 token → 回到 admin.html → 点「连接」按钮 → 在弹出的表单中粘贴 → 保存
+
+API key 表单内会显示 inline 链接「点此打开生成页 ↗」作为二次入口，避免用户在跳转中迷路。

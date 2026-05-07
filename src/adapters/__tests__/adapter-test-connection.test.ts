@@ -37,6 +37,10 @@ describe('API Adapter testConnection()', () => {
   describe('Dev.to Adapter', () => {
     const adapter = new DevToAdapter();
 
+    it('exposes patGenerationUrl pointing to Dev.to settings', () => {
+      expect(adapter.patGenerationUrl).toBe('https://dev.to/settings/extensions');
+    });
+
     it('returns ok=true when API key is valid', async () => {
       process.env.DEVTO_API_KEY = 'test_key_123';
       (global.fetch as any).mockResolvedValueOnce({
@@ -139,6 +143,10 @@ describe('API Adapter testConnection()', () => {
 
   describe('Hashnode Adapter', () => {
     const adapter = new HashnodeAdapter();
+
+    it('exposes patGenerationUrl pointing to Hashnode developer settings', () => {
+      expect(adapter.patGenerationUrl).toBe('https://hashnode.com/settings/developer');
+    });
 
     it('returns ok=true when credentials are valid', async () => {
       process.env.HASHNODE_TOKEN = 'token123';
@@ -277,7 +285,7 @@ describe('API Adapter testConnection()', () => {
       process.env.WORDPRESS_APP_PASSWORD = 'pass123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/Connect with WordPress|WORDPRESS_SITE_URL/);
     });
 
     it('returns error when username is missing', async () => {
@@ -285,7 +293,7 @@ describe('API Adapter testConnection()', () => {
       process.env.WORDPRESS_APP_PASSWORD = 'pass123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/Connect with WordPress|WORDPRESS_USERNAME/);
     });
 
     it('returns error when app password is missing', async () => {
@@ -293,7 +301,7 @@ describe('API Adapter testConnection()', () => {
       process.env.WORDPRESS_USERNAME = 'admin';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/Connect with WordPress|WORDPRESS_APP_PASSWORD/);
     });
 
     it('returns error on authentication failure', async () => {

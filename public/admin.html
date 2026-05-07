@@ -184,6 +184,11 @@
         </div>
         <div>
           <label class="block text-sm font-medium mb-2" for="api-key-input">API 密钥</label>
+          <div id="api-key-pat-hint" class="hidden text-xs text-blue-600 mb-2">
+            <a id="api-key-pat-hint-link" href="#" target="_blank" rel="noopener"
+               class="underline hover:text-blue-800">点此打开生成页 ↗</a>
+            — 在新窗口生成 PAT，复制后粘贴到下方
+          </div>
           <input id="api-key-input" type="password" placeholder="粘贴 API 密钥或 token"
                  class="w-full border border-slate-300 rounded-md px-3 py-2" required />
           <div id="api-key-status" class="text-xs mt-1"></div>
@@ -548,6 +553,18 @@
     $('api-key-input').value = '';
     $('api-key-status').textContent = '';
     $('api-key-form-container').classList.remove('hidden');
+
+    // Populate PAT-generation hint when this platform exposes one
+    // (Dev.to, Hashnode). Reads from the cached /api/platforms response.
+    const hint = $('api-key-pat-hint');
+    const link = $('api-key-pat-hint-link');
+    const platform = platformsCache?.platforms?.find(p => p.id === platformId);
+    if (platform?.patGenerationUrl) {
+      link.href = platform.patGenerationUrl;
+      hint.classList.remove('hidden');
+    } else {
+      hint.classList.add('hidden');
+    }
   }
 
   function closeApiKeyForm() {
@@ -760,6 +777,17 @@
                </a>`
           : '';
 
+        // PAT-only platforms (Dev.to, Hashnode): one-click jump to provider's
+        // token-generation page. Only shown when no OAuth path exists for this
+        // platform — OAuth-first platforms suppress the link to avoid confusing
+        // users with two competing flows.
+        const patLink = (p.patGenerationUrl && !p.supportsOAuth && !p.browserAutomation)
+          ? `<a href="${p.patGenerationUrl}" target="_blank" rel="noopener"
+                 class="text-xs text-blue-600 hover:underline ml-2">
+                 获取 API Key ↗
+               </a>`
+          : '';
+
         return `
           <div class="flex items-start justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50">
             <div class="flex-1">
@@ -773,6 +801,7 @@
                 ${isDefault ? '<span class="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700">默认平台</span>' : ''}
               </div>
               ${fallbackLink}
+              ${patLink}
               ${p.last_test_error ? `<p class="text-xs text-red-600">最后错误：${p.last_test_error}</p>` : ''}
               ${p.test_timestamp ? `<p class="text-xs text-slate-500">测试于：${new Date(p.test_timestamp).toLocaleString('zh-CN')}</p>` : ''}
             </div>
@@ -823,6 +852,20 @@
     setTimeout(() => toast.remove(), 4000);
   }
 
+  // Stable error code → 中文文案。Unknown codes pass through verbatim so we
+  // never silently swallow a new code added to the backend.
+  const OAUTH_ERROR_MESSAGES = {
+    invalid_state: 'OAuth 状态校验失败，请重新连接',
+    state_expired: 'OAuth 等待超时（5 分钟），请重新连接',
+    missing_code_or_state: 'OAuth 回调缺少 code 或 state，请重新连接',
+    exchange_failed: 'OAuth token 交换失败，请检查授权页是否中断',
+    no_refresh_token: 'OAuth 未返回 refresh_token，请到 https://myaccount.google.com/permissions 撤销旧授权后重连',
+    insufficient_scope: 'GitHub 授权权限不足，请重新授权并勾选 gist 权限',
+    authorization_required: 'WordPress.com 授权失效，请重新连接',
+    access_denied: '您拒绝了授权',
+    unknown_provider: 'OAuth provider 未注册（服务端配置错误）',
+  };
+
   function handleOAuthRedirect() {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('connected');
@@ -832,7 +875,8 @@
       params.delete('connected');
     }
     if (oauthError) {
-      showOAuthToast(`OAuth 失败：${oauthError}`, 'error');
+      const friendly = OAUTH_ERROR_MESSAGES[oauthError] || `OAuth 失败：${oauthError}`;
+      showOAuthToast(friendly, 'error');
       params.delete('oauth_error');
     }
     if (connected || oauthError) {

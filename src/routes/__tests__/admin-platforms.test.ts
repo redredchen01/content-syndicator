@@ -91,6 +91,26 @@ describe('GET /api/platforms', () => {
       expect(typeof p.browserSessionExists).toBe('boolean');
     }
   });
+
+  it('includes patGenerationUrl field for every platform (null when not set)', async () => {
+    const res = await request(app).get('/api/platforms');
+    for (const p of res.body.platforms) {
+      expect(p).toHaveProperty('patGenerationUrl');
+      // Either a non-empty URL string or null — never undefined
+      expect(p.patGenerationUrl === null || typeof p.patGenerationUrl === 'string').toBe(true);
+      if (typeof p.patGenerationUrl === 'string') {
+        expect(p.patGenerationUrl.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('returns null patGenerationUrl for OAuth-first platforms (Blogger, Twitter)', async () => {
+    const res = await request(app).get('/api/platforms');
+    const blogger = res.body.platforms.find((p: any) => p.name === 'Blogger');
+    const twitter = res.body.platforms.find((p: any) => p.name === 'Twitter');
+    expect(blogger.patGenerationUrl).toBeNull();
+    expect(twitter.patGenerationUrl).toBeNull();
+  });
 });
 
 describe('PATCH /api/platforms/:platformId/api-key', () => {
