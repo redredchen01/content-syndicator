@@ -1,4 +1,8 @@
 import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from './base';
+import { db } from '../db';
+import { oauthTokens } from '../db/oauth-tokens';
+import { parseWordPressToken } from '../services/wordpress-oauth';
+import { logger } from '../utils/logger';
 
 function escapeHtml(input: string) {
   return input
@@ -46,25 +50,121 @@ function markdownToHtml(markdown: string, originalUrl?: string): string {
   return html.join('\n');
 }
 
+type AuthOrigin = 'oauth' | 'app_password';
+
+interface OAuthContext {
+  origin: 'oauth';
+  baseUrl: 'https://public-api.wordpress.com';
+  postsUrl: string; // /wp/v2/sites/{site_id}/posts
+  testUrl: string;  // /wp/v2/sites/{site_id}
+  authHeader: string;
+}
+
+interface AppPasswordContext {
+  origin: 'app_password';
+  baseUrl: string; // user's self-hosted root
+  postsUrl: string; // ${baseUrl}/wp-json/wp/v2/posts
+  testUrl: string;  // ${baseUrl}/wp-json/wp/v2/users/me
+  authHeader: string;
+}
+
+type PublishContext = OAuthContext | AppPasswordContext;
+
 export class WordPressAdapter extends BaseAdapter {
   name = 'WordPress';
   canPublishAutomatically = true;
 
-  async testConnection(): Promise<TestConnectionResult> {
+  /**
+   * Three-tier auth resolution:
+   *   1. oauth_tokens.wordpress (WordPress.com OAuth — preferred)
+   *   2. WORDPRESS_SITE_URL/USERNAME/APP_PASSWORD (self-hosted Application Password)
+   *   3. throw — caller surfaces clear setup hint
+   *
+   * On decryption failure (typical: ENCRYPTION_KEY rotation) we delete the
+   * corrupt row and fall through to tier 2, mirroring BloggerAdapter.
+   */
+  private getPublishContext(): PublishContext {
+    if (oauthTokens.exists(db, 'wordpress')) {
+      try {
+        const stored = oauthTokens.get(db, 'wordpress');
+        if (!stored) throw new Error('oauth_tokens row vanished mid-read');
+        const { token, site_id } = parseWordPressToken(stored);
+        const baseUrl = 'https://public-api.wordpress.com';
+        return {
+          origin: 'oauth',
+          baseUrl,
+          postsUrl: `${baseUrl}/wp/v2/sites/${encodeURIComponent(site_id)}/posts`,
+          testUrl: `${baseUrl}/wp/v2/sites/${encodeURIComponent(site_id)}`,
+          authHeader: `Bearer ${token}`,
+        };
+      } catch (e: any) {
+        const msg = e?.message ?? String(e);
+        if (/Failed to decrypt/i.test(msg)) {
+          logger.warn(
+            '[WordPress] oauth_tokens row exists but cannot be decrypted ' +
+            '(likely ENCRYPTION_KEY rotation). Clearing row and falling back ' +
+            'to app password / setup-hint.',
+          );
+          oauthTokens.delete(db, 'wordpress');
+          // fall through to app-password branch
+        } else if (/missing access_token|missing token or site_id|malformed access_token/i.test(msg)) {
+          // Row predates the JSON shape (or got corrupted). Treat as
+          // "please reconnect" and fall through.
+          logger.warn(`[WordPress] oauth_tokens row malformed (${msg}); clearing.`);
+          oauthTokens.delete(db, 'wordpress');
+        } else {
+          throw e;
+        }
+      }
+    }
+
     const siteUrl = process.env.WORDPRESS_SITE_URL?.replace(/\/+$/, '');
     const username = process.env.WORDPRESS_USERNAME;
     const appPassword = process.env.WORDPRESS_APP_PASSWORD;
-    if (!siteUrl || !username || !appPassword) {
-      return { ok: false, error: 'WORDPRESS_SITE_URL, WORDPRESS_USERNAME, or WORDPRESS_APP_PASSWORD not configured' };
+    if (siteUrl && username && appPassword) {
+      const basicAuth = Buffer.from(`${username}:${appPassword}`).toString('base64');
+      return {
+        origin: 'app_password',
+        baseUrl: siteUrl,
+        postsUrl: `${siteUrl}/wp-json/wp/v2/posts`,
+        testUrl: `${siteUrl}/wp-json/wp/v2/users/me`,
+        authHeader: `Basic ${basicAuth}`,
+      };
+    }
+
+    throw new Error(
+      'WordPress 未配置：请在 admin 页点击「Connect with WordPress.com」完成 OAuth 授权，' +
+      '或设置 WORDPRESS_SITE_URL / WORDPRESS_USERNAME / WORDPRESS_APP_PASSWORD（自托管站点）。',
+    );
+  }
+
+  /** 401 / authorization_required / invalid_token (any spelling) means the
+   *  stored grant is dead — drop the row so the next call can fall back. */
+  private isInvalidWordPressToken(err: unknown, status?: number): boolean {
+    if (status === 401) return true;
+    const msg = err instanceof Error ? err.message : String(err ?? '');
+    return /authorization_required|invalid_token|token_revoked|401\b/i.test(msg);
+  }
+
+  async testConnection(): Promise<TestConnectionResult> {
+    let ctx: PublishContext;
+    try {
+      ctx = this.getPublishContext();
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? String(e) };
     }
 
     try {
-      const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
-      const response = await fetch(`${siteUrl}/wp-json/wp/v2/users/me`, {
-        headers: { Authorization: `Basic ${auth}` },
+      const response = await fetch(ctx.testUrl, {
+        headers: { Authorization: ctx.authHeader },
       });
 
       if (!response.ok) {
+        if (ctx.origin === 'oauth' && this.isInvalidWordPressToken(null, response.status)) {
+          oauthTokens.delete(db, 'wordpress');
+          logger.warn('[WordPress] OAuth grant revoked — cleared stored tokens');
+          return { ok: false, error: 'WordPress.com session revoked — please reconnect' };
+        }
         return { ok: false, error: `${response.status} ${response.statusText}` };
       }
       return { ok: true };
@@ -74,18 +174,17 @@ export class WordPressAdapter extends BaseAdapter {
   }
 
   async publish(options: PublishOptions): Promise<PublishResult> {
-    const siteUrl = process.env.WORDPRESS_SITE_URL?.replace(/\/+$/, '');
-    const username = process.env.WORDPRESS_USERNAME;
-    const appPassword = process.env.WORDPRESS_APP_PASSWORD;
-    if (!siteUrl || !username || !appPassword) {
-      return this.missingEnv('WORDPRESS_SITE_URL', 'WORDPRESS_USERNAME', 'WORDPRESS_APP_PASSWORD');
+    let ctx: PublishContext;
+    try {
+      ctx = this.getPublishContext();
+    } catch (e: any) {
+      return { platform: this.name, success: false, error: e?.message ?? String(e) };
     }
 
     try {
-      const auth = Buffer.from(`${username}:${appPassword}`).toString('base64');
-      const response = await fetch(`${siteUrl}/wp-json/wp/v2/posts`, {
+      const response = await fetch(ctx.postsUrl, {
         method: 'POST',
-        headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: ctx.authHeader, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: options.title,
           content: markdownToHtml(options.markdownContent, options.originalUrl),
@@ -100,10 +199,31 @@ export class WordPressAdapter extends BaseAdapter {
         throw new Error(`WordPress returned non-JSON (${response.status}): ${text.substring(0, 160)}`);
       }
 
-      if (!response.ok) throw new Error(data.message || `WordPress API returned HTTP ${response.status}`);
-      return this.ok(data.link || `${siteUrl}/wp-admin/post.php?post=${data.id}&action=edit`);
+      if (!response.ok) {
+        if (ctx.origin === 'oauth' && this.isInvalidWordPressToken(data?.error || data?.message, response.status)) {
+          oauthTokens.delete(db, 'wordpress');
+          logger.warn('[WordPress] OAuth grant revoked during publish — cleared stored tokens');
+          return {
+            platform: this.name,
+            success: false,
+            error: 'WordPress.com session revoked — please reconnect and retry',
+          };
+        }
+        throw new Error(data.message || `WordPress API returned HTTP ${response.status}`);
+      }
+      // OAuth response shape: { URL, ID, ... }; self-hosted: { link, id, ... }
+      const publishedUrl =
+        data.URL || data.link ||
+        (ctx.origin === 'app_password'
+          ? `${ctx.baseUrl}/wp-admin/post.php?post=${data.ID || data.id}&action=edit`
+          : `https://public-api.wordpress.com/wp/v2/sites/${(ctx as OAuthContext).postsUrl}/posts/${data.ID || data.id}`);
+      return this.ok(publishedUrl);
     } catch (error: any) {
       return this.fail(error);
     }
   }
 }
+
+// Type-only export for tests that want to assert on AuthOrigin without
+// importing the private context shape.
+export type { AuthOrigin };

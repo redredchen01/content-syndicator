@@ -12,6 +12,8 @@ import {
 } from '../services/google-oauth';
 // Import twitter-oauth to trigger self-registration of twitterAuthStrategy.
 import '../services/twitter-oauth';
+// Import wordpress-oauth to trigger self-registration of wordpressAuthStrategy.
+import '../services/wordpress-oauth';
 import {
   AuthStrategy,
   getStrategyByProvider,
@@ -262,10 +264,23 @@ router.get(
 );
 router.get('/api/auth/twitter/callback', handleOAuthCallback('twitter'));
 
+// ── WordPress.com OAuth ─────────────────────────────────────────────────────
+const WORDPRESS_PLATFORMS = ['wordpress'];
+router.get(
+  '/api/auth/wordpress/start',
+  loopbackOnly,
+  handleOAuthStart(getStrategyByProvider('wordpress')!, WORDPRESS_PLATFORMS),
+);
+router.get('/api/auth/wordpress/callback', handleOAuthCallback('wordpress'));
+
 // ── DELETE /api/auth/oauth/:platform — disconnect (clear stored tokens) ────
 // Loopback-only: anyone able to hit this can break a connected operator's
 // publishing pipeline by revoking their OAuth row.
-const KNOWN_PLATFORMS = new Set([...Object.keys(OAUTH_PLATFORM_REGISTRY), ...TWITTER_PLATFORMS]);
+const KNOWN_PLATFORMS = new Set([
+  ...Object.keys(OAUTH_PLATFORM_REGISTRY),
+  ...TWITTER_PLATFORMS,
+  ...WORDPRESS_PLATFORMS,
+]);
 router.delete('/api/auth/oauth/:platform', loopbackOnly, asyncRoute(async (req, res) => {
   const platform = String(req.params.platform).toLowerCase();
   if (!KNOWN_PLATFORMS.has(platform)) {
