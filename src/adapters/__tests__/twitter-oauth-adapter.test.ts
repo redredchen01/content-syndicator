@@ -197,3 +197,99 @@ describe('TwitterAdapter — dual-mode auth', () => {
     });
   });
 });
+
+// ── Twitter publish() ─────────────────────────────────────────────────────────
+
+describe('TwitterAdapter — publish()', () => {
+  let adapter: TwitterAdapter;
+
+  beforeEach(() => {
+    process.env = { ...ORIG_ENV };
+    setOAuth1aEnv(); // default to OAuth 1.0a for publish tests
+    oauthTokens.delete(db, 'twitter');
+    adapter = new TwitterAdapter();
+    global.fetch = vi.fn() as any;
+  });
+
+  afterEach(() => {
+    oauthTokens.delete(db, 'twitter');
+    vi.restoreAllMocks();
+  });
+
+  it('returns success with tweet URL on HTTP 201', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ data: { id: 'tweet-123' } }),
+    });
+
+    const res = await adapter.publish({
+      title: 'My Article',
+      markdownContent: 'content',
+      originalUrl: 'https://example.com/article',
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.publishedUrl).toContain('tweet-123');
+  });
+
+  it('truncates title to keep total tweet ≤ 280 chars', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ data: { id: 't1' } }),
+    });
+    const longTitle = 'A'.repeat(300);
+    const url = 'https://example.com';
+
+    await adapter.publish({ title: longTitle, markdownContent: 'c', originalUrl: url });
+
+    const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+    expect(body.text.length).toBeLessThanOrEqual(280);
+    expect(body.text).toContain(url);
+    expect(body.text).toContain('…'); // truncation ellipsis
+  });
+
+  it('omits URL suffix when originalUrl is not provided', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ data: { id: 't2' } }),
+    });
+
+    await adapter.publish({ title: 'No URL title', markdownContent: 'c' });
+
+    const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+    expect(body.text).toBe('No URL title');
+  });
+
+  it('returns fail on non-ok response', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => ({ detail: 'server error' }),
+    });
+
+    const res = await adapter.publish({ title: 'T', markdownContent: 'c' });
+    expect(res.success).toBe(false);
+  });
+
+  it('OAuth2 path: clears oauth_tokens on 401 and surfaces session-revoked error', async () => {
+    setOAuth2Env();
+    oauthTokens.save(db, 'twitter', { refresh_token: 'r', access_token: 'a', expires_at: Date.now() + 3600_000 });
+    vi.spyOn(twitterOAuth, 'getValidTwitterAccessToken').mockResolvedValue({
+      accessToken: 'pub-access',
+      expiresAt: Date.now() + 3600_000,
+    });
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: 'invalid_token' }),
+    });
+
+    const res = await adapter.publish({ title: 'Hello', markdownContent: 'm' });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/Session revoked|reconnect/);
+    expect(oauthTokens.exists(db, 'twitter')).toBe(false);
+  });
+});
