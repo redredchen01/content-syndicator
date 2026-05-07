@@ -852,6 +852,20 @@
     setTimeout(() => toast.remove(), 4000);
   }
 
+  // Stable error code → 中文文案。Unknown codes pass through verbatim so we
+  // never silently swallow a new code added to the backend.
+  const OAUTH_ERROR_MESSAGES = {
+    invalid_state: 'OAuth 状态校验失败，请重新连接',
+    state_expired: 'OAuth 等待超时（5 分钟），请重新连接',
+    missing_code_or_state: 'OAuth 回调缺少 code 或 state，请重新连接',
+    exchange_failed: 'OAuth token 交换失败，请检查授权页是否中断',
+    no_refresh_token: 'OAuth 未返回 refresh_token，请到 https://myaccount.google.com/permissions 撤销旧授权后重连',
+    insufficient_scope: 'GitHub 授权权限不足，请重新授权并勾选 gist 权限',
+    authorization_required: 'WordPress.com 授权失效，请重新连接',
+    access_denied: '您拒绝了授权',
+    unknown_provider: 'OAuth provider 未注册（服务端配置错误）',
+  };
+
   function handleOAuthRedirect() {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('connected');
@@ -861,7 +875,8 @@
       params.delete('connected');
     }
     if (oauthError) {
-      showOAuthToast(`OAuth 失败：${oauthError}`, 'error');
+      const friendly = OAUTH_ERROR_MESSAGES[oauthError] || `OAuth 失败：${oauthError}`;
+      showOAuthToast(friendly, 'error');
       params.delete('oauth_error');
     }
     if (connected || oauthError) {
