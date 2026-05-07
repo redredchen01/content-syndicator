@@ -121,6 +121,19 @@ export async function runV2Generate(
     db,
   );
 
+  // Compound backlink graph: attempt to assign a tier-2 target to the WordPress variant.
+  const daTierConfig = getDaTierConfig(db);
+  const tier2Target = selectTier2Target(db, daTierConfig);
+  if (tier2Target !== null) {
+    const wpVariant = variants.find(v => v.platform === 'WordPress');
+    if (wpVariant) {
+      wpVariant.target_url = tier2Target.url;
+      wpVariant.is_tier2 = true;
+      wpVariant.tier2_platform = tier2Target.platform;
+      wpVariant.anchor_words = []; // force fresh anchor generation for tier-2 context
+    }
+  }
+
   const recentTopAnchors = anchorHistory.topInRecentBatches(db, 30, 10).map(r => r.anchor);
   const withAnchors = await attachAnchors(variants, brand, recentTopAnchors, db);
   const lintResult = runLint(withAnchors, brand);

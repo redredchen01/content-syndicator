@@ -79,8 +79,14 @@ async function generateAnchorsForVariant(
   }
 
   const promptBody = getAnchorGeneratorPrompt();
-  const contextTag = brand.target_urls.find(t => t.url === variant.target_url)?.context_tag ?? 'home';
-  const summary = extractSummary(variant.body_markdown);
+  // For tier-2 variants, describe the intermediate page topic so the LLM
+  // generates anchors that reference it — not the brand money page.
+  const contextTag = variant.is_tier2
+    ? (variant.tier2_platform ?? 'external')
+    : (brand.target_urls.find(t => t.url === variant.target_url)?.context_tag ?? 'home');
+  const summary = variant.is_tier2
+    ? `published article on ${variant.tier2_platform ?? 'external platform'}`
+    : extractSummary(variant.body_markdown);
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     let anchors: string[];

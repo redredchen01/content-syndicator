@@ -161,6 +161,46 @@ describe('generateAnchors', () => {
   });
 });
 
+describe('generateAnchors (tier-2 context)', () => {
+  it('uses tier-2 platform as article_summary for is_tier2 variant', async () => {
+    const db = makeDb();
+    mockAnchorResponse(['dev guide']);
+
+    const tier2Variant = makeVariant({
+      platform: 'WordPress',
+      is_tier2: true,
+      tier2_platform: 'Dev.to',
+      target_url: 'https://dev.to/user/some-article',
+    });
+
+    await generateAnchors(tier2Variant, MOCK_BRAND, [], db);
+
+    const calledWith = vi.mocked(invokeLLMWithTools).mock.calls[0][0];
+    const renderedMessage = (calledWith.messages as Array<{ content: string }>)[0].content;
+    // summary should be about the intermediate page, not the draft text
+    expect(renderedMessage).toContain('published article on Dev.to');
+    // contextTag should be the tier-2 platform name, not 'home'
+    expect(renderedMessage).toContain('Dev.to');
+    db.close();
+  });
+
+  it('uses standard draft summary for non-tier-2 variants', async () => {
+    const db = makeDb();
+    mockAnchorResponse(['testbrand platform']);
+
+    const standardVariant = makeVariant({
+      body_markdown: 'This is a great article about TestBrand automation tools.',
+    });
+
+    await generateAnchors(standardVariant, MOCK_BRAND, [], db);
+
+    const calledWith = vi.mocked(invokeLLMWithTools).mock.calls[0][0];
+    const renderedMessage = (calledWith.messages as Array<{ content: string }>)[0].content;
+    expect(renderedMessage).not.toContain('published article on');
+    db.close();
+  });
+});
+
 describe('attachAnchors', () => {
   it('attaches anchor_words to all variants in-place', async () => {
     const db = makeDb();
