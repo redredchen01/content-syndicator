@@ -128,6 +128,33 @@ describe('GitHubAdapter — two-tier auth resolution', () => {
     expect(oauthTokens.exists(db, 'github')).toBe(false);
   });
 
+  it('clears OAuth row on 401 with EMPTY body during publish (regression)', async () => {
+    // Regression: prior code did `await response.json()` without a catch,
+    // throwing on empty/non-JSON 401 bodies and bypassing the OAuth-row
+    // cleanup branch. Verify revocation cleanup still fires when the body
+    // can't be parsed.
+    oauthTokens.save(db, 'github', {
+      refresh_token: 'gh-access',
+      access_token: 'gh-access',
+      expires_at: null,
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      // .json() throws — adapter must still recognize this as a revoked token
+      json: async () => { throw new SyntaxError('Unexpected end of JSON input'); },
+    });
+
+    const res = await adapter.publish({
+      title: 'X',
+      markdownContent: 'Y',
+      publishStatus: 'public',
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/session revoked/i);
+    expect(oauthTokens.exists(db, 'github')).toBe(false);
+  });
+
   it('clears OAuth row on 401 during publish', async () => {
     oauthTokens.save(db, 'github', {
       refresh_token: 'gh-access',

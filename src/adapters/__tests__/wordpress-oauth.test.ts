@@ -102,6 +102,28 @@ describe('WordPressAdapter — three-tier auth resolution', () => {
     expect((init as any).method).toBe('POST');
   });
 
+  it('falls back to a well-formed wp.com REST URL when response omits URL/link (regression)', async () => {
+    // Regression: prior fallback embedded postsUrl as a path segment, producing
+    // .../sites/https:/.../sites/12345/posts/posts/7. Verify the fallback is
+    // a single, canonical /wp/v2/sites/{siteId}/posts/{postId}.
+    makeOAuthRow();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({ ID: 7 }), // no URL, no link
+    });
+
+    const res = await adapter.publish({
+      title: 'Hello',
+      markdownContent: 'Body',
+      publishStatus: 'public',
+    });
+    expect(res.success).toBe(true);
+    expect((res as any).publishedUrl).toBe(
+      'https://public-api.wordpress.com/wp/v2/sites/12345/posts/7',
+    );
+  });
+
   it('publishes against self-hosted /wp-json/wp/v2/posts via App Password', async () => {
     setAppPasswordEnv();
     fetchMock.mockResolvedValueOnce({

@@ -22,6 +22,14 @@ export class GitHubAdapter extends BaseAdapter {
    *
    * On decryption failure (typical: ENCRYPTION_KEY rotation) we delete the
    * corrupt row and fall through to PAT, mirroring BloggerAdapter / WordPress.
+   *
+   * Sentinel pattern: GitHub OAuth Apps don't issue refresh_tokens, so the
+   * stored row's `refresh_token` and `access_token` columns are duplicates
+   * (see services/github-oauth.ts). We read access_token first, then fall
+   * back to refresh_token — the order is informational only since the values
+   * are identical, but it makes the access-token intent explicit.
+   * IMPORTANT: never call a refresh endpoint with the value in
+   * stored.refresh_token here — it's an access token, not a refresh token.
    */
   private getAuthHeader(): AuthHeader {
     if (oauthTokens.exists(db, 'github')) {
@@ -66,10 +74,15 @@ export class GitHubAdapter extends BaseAdapter {
   }
 
   /** 401 / Bad credentials means the OAuth token is dead — clear the row. */
-  private isInvalidGitHubToken(status: number, body: any): boolean {
+  private isInvalidGitHubToken(status: number, body: unknown): boolean {
     if (status === 401) return true;
-    const msg = (body && (body.message || body.error)) ?? '';
-    return /bad credentials|invalid_token|401\b/i.test(String(msg));
+    let msg = '';
+    if (body && typeof body === 'object') {
+      const obj = body as { message?: unknown; error?: unknown };
+      if (typeof obj.message === 'string') msg = obj.message;
+      else if (typeof obj.error === 'string') msg = obj.error;
+    }
+    return /bad credentials|invalid_token|401\b/i.test(msg);
   }
 
   async publish(options: PublishOptions): Promise<PublishResult> {
@@ -101,7 +114,10 @@ export class GitHubAdapter extends BaseAdapter {
         }),
       });
 
-      const data = await response.json();
+      // Guard against 401/5xx responses with empty or non-JSON bodies — without
+      // this catch, a revoked-token response with no body would throw out of
+      // the success path and bypass the OAuth-row cleanup below.
+      const data = await response.json().catch(() => ({} as Record<string, unknown>));
       if (!response.ok) {
         if (auth.origin === 'oauth' && this.isInvalidGitHubToken(response.status, data)) {
           oauthTokens.delete(db, 'github');
@@ -112,9 +128,11 @@ export class GitHubAdapter extends BaseAdapter {
             error: 'GitHub session revoked — please reconnect and retry',
           };
         }
-        throw new Error(data.message || 'Failed to create GitHub Gist');
+        const msg = (typeof (data as any).message === 'string' && (data as any).message) ||
+                    `GitHub API returned HTTP ${response.status}`;
+        throw new Error(msg);
       }
-      return this.ok(data.html_url);
+      return this.ok((data as any).html_url);
     } catch (error: any) {
       return this.fail(error);
     }
@@ -151,4 +169,3 @@ export class GitHubAdapter extends BaseAdapter {
   }
 }
 
-export type { AuthOrigin };

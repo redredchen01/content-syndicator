@@ -50,11 +50,12 @@ function markdownToHtml(markdown: string, originalUrl?: string): string {
   return html.join('\n');
 }
 
-type AuthOrigin = 'oauth' | 'app_password';
-
 interface OAuthContext {
   origin: 'oauth';
   baseUrl: 'https://public-api.wordpress.com';
+  /** WP.com blog ID — kept in context so publishedUrl fallback construction
+   *  can reference it without re-parsing postsUrl. */
+  siteId: string;
   postsUrl: string; // /wp/v2/sites/{site_id}/posts
   testUrl: string;  // /wp/v2/sites/{site_id}
   authHeader: string;
@@ -93,6 +94,7 @@ export class WordPressAdapter extends BaseAdapter {
         return {
           origin: 'oauth',
           baseUrl,
+          siteId: site_id,
           postsUrl: `${baseUrl}/wp/v2/sites/${encodeURIComponent(site_id)}/posts`,
           testUrl: `${baseUrl}/wp/v2/sites/${encodeURIComponent(site_id)}`,
           authHeader: `Bearer ${token}`,
@@ -212,11 +214,14 @@ export class WordPressAdapter extends BaseAdapter {
         throw new Error(data.message || `WordPress API returned HTTP ${response.status}`);
       }
       // OAuth response shape: { URL, ID, ... }; self-hosted: { link, id, ... }
+      const postId = data.ID || data.id;
       const publishedUrl =
         data.URL || data.link ||
         (ctx.origin === 'app_password'
-          ? `${ctx.baseUrl}/wp-admin/post.php?post=${data.ID || data.id}&action=edit`
-          : `https://public-api.wordpress.com/wp/v2/sites/${(ctx as OAuthContext).postsUrl}/posts/${data.ID || data.id}`);
+          // self-hosted fallback: open the post in WP-Admin
+          ? `${ctx.baseUrl}/wp-admin/post.php?post=${postId}&action=edit`
+          // wp.com fallback: hit the canonical REST resource for this post
+          : `${ctx.baseUrl}/wp/v2/sites/${encodeURIComponent(ctx.siteId)}/posts/${postId}`);
       return this.ok(publishedUrl);
     } catch (error: any) {
       return this.fail(error);
@@ -224,6 +229,3 @@ export class WordPressAdapter extends BaseAdapter {
   }
 }
 
-// Type-only export for tests that want to assert on AuthOrigin without
-// importing the private context shape.
-export type { AuthOrigin };
