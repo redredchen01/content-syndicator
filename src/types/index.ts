@@ -498,4 +498,8 @@ export interface Variant {
   target_url: string;
   generation_status: 'ok' | 'failed';
   error?: string;
+  /** Set to true when this variant links to a tier-2 intermediate page. */
+  is_tier2?: boolean;
+  /** Platform name of the tier-2 target page (e.g. 'Dev.to'). */
+  tier2_platform?: string;
 }
