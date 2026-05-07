@@ -4,16 +4,12 @@ import { syncRoute } from './_helpers';
 import {
   db, isBrowserAutomationEnabled,
   updateApiKey, batchValidateApiKeys, getAllPlatformStatuses,
-  resolveTargetPlatforms as resolveTargetPlatformsService,
   getBrandProfileWithDispatch, saveBrandProfileFromInput, runPrecheckForDispatch,
   updatePreferredPlatformsForBrand, getPreferredPlatformsForBrand,
   getPlatformHealth, updateRoiConfig,
   prepareBrowserLogin, beginBrowserLoginSession,
   prepareBrowserTest, beginBrowserTestSession, getBrowserSessionStatus,
 } from '../services/admin';
-
-// Compat re-export for routes/publish.ts (Unit 7 will remove).
-export const resolveTargetPlatforms = (platforms?: unknown): string[] => resolveTargetPlatformsService(db, platforms);
 
 export const router = express.Router();
 

@@ -6,10 +6,8 @@
  * isDefaultPublishTarget, getPlatformStatus, getDefaultPublishingPlatforms,
  * resolveTargetPlatforms, plus the /api/platforms response builder).
  *
- * Cross-domain: routes/publish.ts also depends on resolveTargetPlatforms
- * and getDefaultPublishingPlatforms via admin.ts re-exports. This service
- * is the canonical home; routes/admin.ts retains a thin re-export shim
- * for publish.ts compat until Unit 7 cleans that up.
+ * Cross-domain: routes/publish.ts imports resolveTargetPlatforms and
+ * getDefaultPublishingPlatforms directly from this service (Unit 7).
  */
 
 import type Database from 'better-sqlite3';
@@ -166,7 +164,4 @@ export function getAllPlatformStatuses(db: Database.Database) {
   return { platforms, defaults: getDefaultPublishingPlatforms(db) };
 }
 
-// Re-export for routes/publish.ts compatibility (publish.ts currently imports
-// these from routes/admin.ts; the admin module re-exports from here. Unit 7
-// will switch publish.ts to import directly from this service).
 export { getAdapterId, hasSavedBrowserSession };
