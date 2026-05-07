@@ -149,6 +149,9 @@ router.get('/api/platforms', syncRoute((req, res) => {
       oauthProviderLabel: getOAuthProviderLabel(a.name),
       supportsBrowserFallback: Boolean(a.supportsBrowserFallback),
       browserSessionExists: hasSavedBrowserSession(a),
+      // PAT generation hint URL (Dev.to / Hashnode etc. — null when adapter
+      // doesn't expose one or the value is empty / falsy).
+      patGenerationUrl: a.patGenerationUrl ? a.patGenerationUrl : null,
     };
   });
   res.json({ platforms, defaults: getDefaultPublishingPlatforms() });

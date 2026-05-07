@@ -37,6 +37,10 @@ describe('API Adapter testConnection()', () => {
   describe('Dev.to Adapter', () => {
     const adapter = new DevToAdapter();
 
+    it('exposes patGenerationUrl pointing to Dev.to settings', () => {
+      expect(adapter.patGenerationUrl).toBe('https://dev.to/settings/extensions');
+    });
+
     it('returns ok=true when API key is valid', async () => {
       process.env.DEVTO_API_KEY = 'test_key_123';
       (global.fetch as any).mockResolvedValueOnce({
@@ -139,6 +143,10 @@ describe('API Adapter testConnection()', () => {
 
   describe('Hashnode Adapter', () => {
     const adapter = new HashnodeAdapter();
+
+    it('exposes patGenerationUrl pointing to Hashnode developer settings', () => {
+      expect(adapter.patGenerationUrl).toBe('https://hashnode.com/settings/developer');
+    });
 
     it('returns ok=true when credentials are valid', async () => {
       process.env.HASHNODE_TOKEN = 'token123';
