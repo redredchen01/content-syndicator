@@ -22,9 +22,65 @@ import { generateVariants, generateSingleVariant } from '../variant-generator';
 import { attachAnchors } from '../anchor-generator';
 import { runLint } from '../lint';
 import { getProfile } from '../brand-profile';
-import { anchorHistory, publishJobs } from '../../db/repositories';
+import { anchorHistory, linkChecks, publishJobs } from '../../db/repositories';
 import { dispatchVariantJobs } from '../queue/publish-worker';
-import { filterByRoi } from '../roi-scorer';
+import { filterByRoi, getDaTierConfig, type DaTierConfig } from '../roi-scorer';
+import { logger } from '../../utils/logger';
+
+// ---------------------------------------------------------------------------
+// Compound Backlink Graph — tier-2 target selection
+// ---------------------------------------------------------------------------
+
+const TIER2_POOL_MIN = 10;
+const TIER2_COOLDOWN_DAYS = 7;
+
+/**
+ * Selects a tier-2 target URL from the alive published URL pool.
+ *
+ * Returns { url, platform } for the highest-DA alive URL that:
+ *   - is not a WordPress URL (anti-tier-3 guard: WordPress is always our tier-2 slot)
+ *   - has not been used as a tier-2 target within the last 7 days
+ *
+ * Returns null when the pool is too small (<10) or all URLs are in cooldown.
+ */
+function selectTier2Target(
+  db: Database.Database,
+  daTierConfig: DaTierConfig,
+): { url: string; platform: string } | null {
+  try {
+    const pool = linkChecks.aliveUrlsPool(db);
+
+    if (pool.length < TIER2_POOL_MIN) {
+      logger.info(`[CompoundGraph] skipped: pool too small (n=${pool.length})`);
+      return null;
+    }
+
+    const windowIso = new Date(
+      Date.now() - TIER2_COOLDOWN_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    const survivors = pool.filter(
+      ({ published_url }) => !anchorHistory.usedAsTier2InWindow(db, published_url, windowIso),
+    );
+
+    if (survivors.length === 0) {
+      logger.info('[CompoundGraph] skipped: all urls in cooldown');
+      return null;
+    }
+
+    // Sort descending by DA tier score; stable sort preserves original order on ties
+    survivors.sort(
+      (a, b) => (daTierConfig.tiers[b.platform] ?? 0) - (daTierConfig.tiers[a.platform] ?? 0),
+    );
+
+    const { platform, published_url: url } = survivors[0];
+    logger.info(`[CompoundGraph] tier-2 assigned: ${platform} ${url}`);
+    return { url, platform };
+  } catch (err: any) {
+    logger.warn(`[CompoundGraph] selector error, skipping tier-2: ${err.message}`);
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // v2/generate

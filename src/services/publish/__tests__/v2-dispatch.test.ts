@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { applyV2Schema } from '../../../db/schema';
+import { linkChecks } from '../../../db/repositories';
 import type { Variant } from '../../../types';
 import type { BrandProfile } from '../../../db/repositories';
 
@@ -49,8 +50,11 @@ vi.mock('../../brand-profile', () => ({
   getProfile: (...args: unknown[]) => getProfileMock(...args),
 }));
 
+const getDaTierConfigMock = vi.fn();
+
 vi.mock('../../roi-scorer', () => ({
   filterByRoi: (...args: unknown[]) => filterByRoiMock(...args),
+  getDaTierConfig: (...args: unknown[]) => getDaTierConfigMock(...args),
 }));
 
 vi.mock('../../queue/publish-worker', () => ({
@@ -84,6 +88,12 @@ function makeVariant(platform: string, body = 'A'.repeat(500), anchors = ['hello
   };
 }
 
+// Default DA tier config used in tests that exercise the tier-2 selector
+const defaultDaTiers = {
+  tiers: { 'Dev.to': 1.0, Medium: 1.0, Hashnode: 1.0, Blogger: 0.6, WordPress: 0.6, 'Telegra.ph': 0.3 },
+  threshold: 0.3,
+};
+
 beforeEach(() => {
   // mockReset (not clearAllMocks) — implementations set via mockImplementation
   // can capture per-test db references in closures, so reset between tests.
@@ -94,6 +104,9 @@ beforeEach(() => {
   getProfileMock.mockReset();
   filterByRoiMock.mockReset();
   dispatchVariantJobsMock.mockReset();
+  getDaTierConfigMock.mockReset();
+  // Default: return the standard DA tier config
+  getDaTierConfigMock.mockReturnValue(defaultDaTiers);
 });
 
 // ---------------------------------------------------------------------------
@@ -324,5 +337,114 @@ describe('runRegenerateVariant', () => {
       draft: 'd',
     });
     expect(r).toMatchObject({ ok: false, status: 400 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectTier2Target (via runV2Generate integration)
+// ---------------------------------------------------------------------------
+
+function insertAliveUrl(
+  db: Database.Database,
+  platform: string,
+  published_url: string,
+  batchSeq: number,
+) {
+  linkChecks.insert(db, {
+    batch_id: `pool_b${batchSeq}`,
+    variant_id: `pool_v${batchSeq}`,
+    platform,
+    published_url,
+    check_type: 't7d',
+    http_status: 200,
+    classification: 'alive',
+  });
+}
+
+describe('selectTier2Target (via runV2Generate)', () => {
+  it('skips tier-2 when alive pool has fewer than 10 URLs', async () => {
+    const db = freshDb();
+    // Insert only 9 alive non-WordPress URLs
+    for (let i = 0; i < 9; i++) {
+      insertAliveUrl(db, 'Dev.to', `https://dev.to/article-${i}`, i);
+    }
+
+    getProfileMock.mockReturnValue(fakeBrand);
+    const variants = [makeVariant('WordPress'), makeVariant('Dev.to')];
+    generateVariantsMock.mockResolvedValue({ batchId: 'b1', variants });
+    attachAnchorsMock.mockResolvedValue(variants);
+    runLintMock.mockReturnValue({ ok: true, violations: [] });
+
+    await runV2Generate(db, { draft: 'test draft' });
+
+    const wpVariant = variants.find(v => v.platform === 'WordPress')!;
+    expect(wpVariant.is_tier2).toBeFalsy();
+    expect(wpVariant.target_url).toBe('https://example.com');
+  });
+
+  it('assigns tier-2 target to WordPress variant when pool has 10+ URLs', async () => {
+    const db = freshDb();
+    // 5 Dev.to + 5 Medium = 10 alive URLs
+    for (let i = 0; i < 5; i++) {
+      insertAliveUrl(db, 'Dev.to', `https://dev.to/article-${i}`, i);
+      insertAliveUrl(db, 'Medium', `https://medium.com/article-${i}`, i + 5);
+    }
+
+    getProfileMock.mockReturnValue(fakeBrand);
+    const wordpressVariant = makeVariant('WordPress');
+    const otherVariant = makeVariant('Dev.to');
+    const variants = [wordpressVariant, otherVariant];
+    generateVariantsMock.mockResolvedValue({ batchId: 'b1', variants });
+    attachAnchorsMock.mockImplementation(async (vs: Variant[]) => vs);
+    runLintMock.mockReturnValue({ ok: true, violations: [] });
+
+    await runV2Generate(db, { draft: 'test draft' });
+
+    expect(wordpressVariant.is_tier2).toBe(true);
+    expect(wordpressVariant.target_url).not.toBe('https://example.com');
+    expect(wordpressVariant.tier2_platform).toBeDefined();
+    // Other variants must not be modified
+    expect(otherVariant.is_tier2).toBeFalsy();
+    expect(otherVariant.target_url).toBe('https://example.com');
+  });
+
+  it('excludes WordPress URLs from pool (anti-tier-3 guard)', async () => {
+    const db = freshDb();
+    // 9 alive non-WordPress + 1 WordPress alive = pool of 9 (below threshold)
+    for (let i = 0; i < 9; i++) {
+      insertAliveUrl(db, 'Dev.to', `https://dev.to/article-${i}`, i);
+    }
+    insertAliveUrl(db, 'WordPress', 'https://mysite.wordpress.com/post', 100);
+
+    getProfileMock.mockReturnValue(fakeBrand);
+    const variants = [makeVariant('WordPress'), makeVariant('Dev.to')];
+    generateVariantsMock.mockResolvedValue({ batchId: 'b1', variants });
+    attachAnchorsMock.mockResolvedValue(variants);
+    runLintMock.mockReturnValue({ ok: true, violations: [] });
+
+    await runV2Generate(db, { draft: 'test draft' });
+
+    const wpVariant = variants.find(v => v.platform === 'WordPress')!;
+    expect(wpVariant.is_tier2).toBeFalsy();
+  });
+
+  it('prefers highest-DA platform as tier-2 target', async () => {
+    const db = freshDb();
+    // Mix of Tier1 (Dev.to=1.0) and Tier2 (Blogger=0.6) platforms
+    for (let i = 0; i < 5; i++) {
+      insertAliveUrl(db, 'Blogger', `https://myblog.blogspot.com/post-${i}`, i);
+      insertAliveUrl(db, 'Dev.to', `https://dev.to/article-${i}`, i + 5);
+    }
+
+    getProfileMock.mockReturnValue(fakeBrand);
+    const wordpressVariant = makeVariant('WordPress');
+    generateVariantsMock.mockResolvedValue({ batchId: 'b1', variants: [wordpressVariant] });
+    attachAnchorsMock.mockImplementation(async (vs: Variant[]) => vs);
+    runLintMock.mockReturnValue({ ok: true, violations: [] });
+
+    await runV2Generate(db, { draft: 'test draft' });
+
+    // Should prefer Dev.to (DA 1.0) over Blogger (DA 0.6)
+    expect(wordpressVariant.tier2_platform).toBe('Dev.to');
   });
 });

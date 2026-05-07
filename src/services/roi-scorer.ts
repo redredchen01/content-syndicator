@@ -67,7 +67,7 @@ export interface FilterResult {
 // Config helpers
 // ---------------------------------------------------------------------------
 
-interface DaTierConfig {
+export interface DaTierConfig {
   tiers: Record<string, number>;
   threshold: number;
 }
