@@ -1,11 +1,13 @@
 /**
  * services/admin/* barrel — public re-exports for admin domain services.
  *
- * Currently scoped to credential-store (Plan 2026-05-07-002 Unit 3 — minimum
- * viable PR). Future units (platforms, brand, browser-auth, roi-config) will
- * extend this barrel as they are extracted.
+ * Plan 2026-05-07-002 progress:
+ *   - Unit 1 (this PR): platforms / brand / roi-config
+ *   - Unit 3 (PR #19):  credential-store
+ *   - Unit 2 / 4 / 5+:  pending (browser-auth, slim controller, publish/*)
  */
 
+// credential-store (PR #19)
 export {
   ENV_KEY_MAP,
   testCredentialAgainstAdapter,
@@ -19,3 +21,46 @@ export type {
   BatchCredentialInput,
   BatchValidationItem,
 } from './credential-store';
+
+// platforms (Unit 1)
+export {
+  API_CONNECTED,
+  hasStoredApiKey,
+  isAdapterConnected,
+  isDefaultPublishTarget,
+  getPlatformStatus,
+  getDefaultPublishingPlatforms,
+  resolveTargetPlatforms,
+  getAllPlatformStatuses,
+  getAdapterId,
+  hasSavedBrowserSession,
+} from './platforms';
+
+export type { PlatformStatus } from './platforms';
+
+// brand (Unit 1)
+export {
+  getBrandProfileWithDispatch,
+  saveBrandProfileFromInput,
+  runPrecheckForDispatch,
+  updatePreferredPlatformsForBrand,
+  getPreferredPlatformsForBrand,
+} from './brand';
+
+export type {
+  BrandProfileWithDispatch,
+  SaveBrandProfileResult,
+  RunPrecheckResult,
+  UpdatePreferredPlatformsResult,
+} from './brand';
+
+// roi-config (Unit 1)
+export {
+  getPlatformHealth,
+  updateRoiConfig,
+} from './roi-config';
+
+export type {
+  UpdateRoiConfigInput,
+  UpdateRoiConfigResult,
+} from './roi-config';
