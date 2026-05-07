@@ -310,6 +310,64 @@ describe('linkChecks', () => {
     expect(linkChecks.survivalRecordCount(db, 't7d', 'Medium', '2020-01-01T00:00:00Z')).toBe(0);
     expect(linkChecks.survivalRecordCount(db, 't30d', 'Hashnode', '2020-01-01T00:00:00Z')).toBe(0);
   });
+
+  it('aliveUrlsPool returns alive non-WordPress URLs', () => {
+    linkChecks.insert(db, {
+      batch_id: 'b1', variant_id: 'v1', platform: 'Dev.to',
+      published_url: 'https://dev.to/article', check_type: 't7d',
+      http_status: 200, classification: 'alive',
+    });
+    linkChecks.insert(db, {
+      batch_id: 'b2', variant_id: 'v2', platform: 'Medium',
+      published_url: 'https://medium.com/article', check_type: 't30d',
+      http_status: 200, classification: 'redirect_alive',
+    });
+    // Dead URL — excluded
+    linkChecks.insert(db, {
+      batch_id: 'b3', variant_id: 'v3', platform: 'Hashnode',
+      published_url: 'https://hashnode.com/dead', check_type: 't7d',
+      http_status: 404, classification: '404',
+    });
+    // WordPress — excluded by anti-tier-3 guard
+    linkChecks.insert(db, {
+      batch_id: 'b4', variant_id: 'v4', platform: 'WordPress',
+      published_url: 'https://mysite.wordpress.com/post', check_type: 't7d',
+      http_status: 200, classification: 'alive',
+    });
+
+    const pool = linkChecks.aliveUrlsPool(db);
+    expect(pool).toHaveLength(2);
+    const platforms = pool.map(r => r.platform).sort();
+    expect(platforms).toEqual(['Dev.to', 'Medium']);
+    expect(pool.find(r => r.platform === 'WordPress')).toBeUndefined();
+  });
+
+  it('aliveUrlsPool deduplicates same URL across check_type rows', () => {
+    // Same URL at t7d and t30d — should appear once
+    for (const check_type of ['t7d', 't30d'] as const) {
+      linkChecks.insert(db, {
+        batch_id: `b-${check_type}`, variant_id: 'v1', platform: 'Dev.to',
+        published_url: 'https://dev.to/article', check_type,
+        http_status: 200, classification: 'alive',
+      });
+    }
+    const pool = linkChecks.aliveUrlsPool(db);
+    expect(pool).toHaveLength(1);
+    expect(pool[0].platform).toBe('Dev.to');
+  });
+
+  it('aliveUrlsPool returns empty when only WordPress URLs exist', () => {
+    linkChecks.insert(db, {
+      batch_id: 'b1', variant_id: 'v1', platform: 'WordPress',
+      published_url: 'https://mysite.wordpress.com/post', check_type: 't7d',
+      http_status: 200, classification: 'alive',
+    });
+    expect(linkChecks.aliveUrlsPool(db)).toHaveLength(0);
+  });
+
+  it('aliveUrlsPool returns empty on empty link_checks', () => {
+    expect(linkChecks.aliveUrlsPool(db)).toHaveLength(0);
+  });
 });
 
 describe('anchorHistory', () => {
@@ -354,6 +412,63 @@ describe('anchorHistory', () => {
     expect(top[0].anchor).toBe('click here');
     expect(top[0].count).toBe(3);
     expect(top[0].ratio).toBeCloseTo(3 / 5, 5);
+  });
+
+  it('insert with is_tier2=true round-trips to 1 in SELECT', () => {
+    anchorHistory.insert(db, {
+      batch_id: 'b1',
+      variant_id: 'v1',
+      platform: 'WordPress',
+      anchor_text: 'dev guide',
+      target_url: 'https://dev.to/user/some-post',
+      is_tier2: true,
+    });
+    const row = db.prepare(
+      `SELECT is_tier2 FROM anchor_history WHERE batch_id = 'b1'`,
+    ).get() as { is_tier2: number };
+    expect(row.is_tier2).toBe(1);
+  });
+
+  it('insert without is_tier2 defaults to 0', () => {
+    anchorHistory.insert(db, {
+      batch_id: 'b2',
+      variant_id: 'v2',
+      platform: 'Dev.to',
+      anchor_text: 'some anchor',
+      target_url: 'https://example.com',
+    });
+    const row = db.prepare(
+      `SELECT is_tier2 FROM anchor_history WHERE batch_id = 'b2'`,
+    ).get() as { is_tier2: number };
+    expect(row.is_tier2).toBe(0);
+  });
+
+  it('usedAsTier2InWindow returns true when URL used within window', () => {
+    const url = 'https://dev.to/user/article';
+    anchorHistory.insert(db, {
+      batch_id: 'b1', variant_id: 'v1', platform: 'WordPress',
+      anchor_text: 'article', target_url: url, is_tier2: true,
+    });
+    expect(anchorHistory.usedAsTier2InWindow(db, url, '2020-01-01T00:00:00Z')).toBe(true);
+  });
+
+  it('usedAsTier2InWindow returns false when URL is outside window', () => {
+    const url = 'https://dev.to/user/article';
+    anchorHistory.insert(db, {
+      batch_id: 'b1', variant_id: 'v1', platform: 'WordPress',
+      anchor_text: 'article', target_url: url, is_tier2: true,
+    });
+    // Use far-future cutoff so the row falls outside the window
+    expect(anchorHistory.usedAsTier2InWindow(db, url, '2099-01-01T00:00:00Z')).toBe(false);
+  });
+
+  it('usedAsTier2InWindow returns false when is_tier2=0', () => {
+    const url = 'https://example.com';
+    anchorHistory.insert(db, {
+      batch_id: 'b1', variant_id: 'v1', platform: 'Dev.to',
+      anchor_text: 'link', target_url: url,
+    });
+    expect(anchorHistory.usedAsTier2InWindow(db, url, '2020-01-01T00:00:00Z')).toBe(false);
   });
 });
 

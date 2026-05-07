@@ -245,6 +245,15 @@ export function applyV2Schema(db: Database.Database): void {
   // ROI auto-ranking: priority column for queue ordering (REAL preserves score precision)
   addColumnIfMissing(db, 'publish_jobs', 'priority', 'REAL NOT NULL DEFAULT 0.0');
 
+  // Compound backlink graph: marks anchor_history rows where WordPress variant
+  // linked to a tier-2 intermediate page instead of the brand money page.
+  // Used for 7-day cooldown queries and anti-tier-3 pool exclusion.
+  addColumnIfMissing(db, 'anchor_history', 'is_tier2', 'INTEGER NOT NULL DEFAULT 0');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_anchor_history_tier2
+      ON anchor_history(is_tier2, target_url, used_at)
+  `);
+
   // Rebuild dispatch index to include priority DESC for ROI-ordered dequeue
   db.exec('DROP INDEX IF EXISTS idx_publish_jobs_dispatch');
   db.exec(`

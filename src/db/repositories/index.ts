@@ -68,6 +68,7 @@ export interface AnchorHistoryRow {
   platform: string;
   anchor_text: string;
   target_url: string;
+  is_tier2?: boolean;
 }
 
 export type DraftBatchStatus = 'drafting' | 'dispatched' | 'archived';
@@ -269,6 +270,23 @@ export const linkChecks = {
     `).get(checkType, platform, sinceIso) as { cnt: number };
     return row.cnt;
   },
+
+  /**
+   * Returns all distinct alive published URLs, excluding WordPress platform
+   * (anti-tier-3 guard: WordPress is always our tier-2 variant slot).
+   * No checked_at filter — link_checks rows are written once at T+7d/T+30d;
+   * a recency filter would produce a near-empty pool.
+   * Caller is responsible for sorting by DA tier.
+   */
+  aliveUrlsPool(db: Database.Database): Array<{ platform: string; published_url: string }> {
+    return db.prepare(`
+      SELECT platform, published_url
+      FROM link_checks
+      WHERE classification IN ('alive', 'redirect_alive')
+        AND platform != 'WordPress'
+      GROUP BY platform, published_url
+    `).all() as Array<{ platform: string; published_url: string }>;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -278,9 +296,16 @@ export const linkChecks = {
 export const anchorHistory = {
   insert(db: Database.Database, row: AnchorHistoryRow): number {
     const result = db.prepare(`
-      INSERT INTO anchor_history (batch_id, variant_id, platform, anchor_text, target_url)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(row.batch_id, row.variant_id, row.platform, row.anchor_text, row.target_url);
+      INSERT INTO anchor_history (batch_id, variant_id, platform, anchor_text, target_url, is_tier2)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      row.batch_id,
+      row.variant_id,
+      row.platform,
+      row.anchor_text,
+      row.target_url,
+      row.is_tier2 ? 1 : 0,
+    );
     return Number(result.lastInsertRowid);
   },
 
@@ -322,6 +347,18 @@ export const anchorHistory = {
       WHERE target_url = ? AND used_at >= ?
     `).get(targetUrl, sinceIso) as { cnt: number };
     return row.cnt;
+  },
+
+  /**
+   * Returns true if the given URL was used as a tier-2 target within the
+   * given time window. Used to enforce the 7-day cooldown per tier-2 target.
+   */
+  usedAsTier2InWindow(db: Database.Database, targetUrl: string, windowIso: string): boolean {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS cnt FROM anchor_history
+      WHERE is_tier2 = 1 AND target_url = ? AND used_at >= ?
+    `).get(targetUrl, windowIso) as { cnt: number };
+    return row.cnt > 0;
   },
 };
 
