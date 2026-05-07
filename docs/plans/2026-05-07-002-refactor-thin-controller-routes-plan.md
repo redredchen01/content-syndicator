@@ -189,7 +189,7 @@ src/
 
 ## Implementation Units
 
-- [ ] **Unit 1: Scaffold `services/admin/` + extract platforms / brand / roi-config services**
+- [x] **Unit 1: Scaffold `services/admin/` + extract platforms / brand / roi-config services**
 
 **Goal:** 建立 admin 子目錄與 barrel；先抽出三個低風險 service（既有 controller 已是薄形態），同時把跨路由共用的 platform helpers 集中到 `platforms.ts`，為後續 publish PR 鋪路。
 
@@ -233,7 +233,7 @@ src/
 
 ---
 
-- [ ] **Unit 2: Extract `services/admin/browser-auth.ts`**
+- [x] **Unit 2: Extract `services/admin/browser-auth.ts`**
 
 **Goal:** 把 `routes/admin.ts:188-331` 三個 browser-auth endpoint（70+ 行 handler）的業務邏輯搬入 service，含 setInterval 清理 / context.on('close') 監聽 / loginUrlMap / 檔案路徑構造。
 
@@ -272,7 +272,7 @@ src/
 
 ---
 
-- [ ] **Unit 3: Extract `services/admin/credential-store.ts` + 合併 envKeyMap**
+- [x] **Unit 3: Extract `services/admin/credential-store.ts` + 合併 envKeyMap**
 
 **Goal:** 把 `routes/admin.ts:333-457`（PATCH api-key, 124 行）+ `routes/admin.ts:582-661`（batch-validate, 78 行）+ `services/credential-validator.ts:15-48`（envKeyMap snapshot/restore）三處重複邏輯收斂。**本 plan 最高 ROI 的單一動作。**
 
@@ -321,7 +321,7 @@ src/
 
 ---
 
-- [ ] **Unit 4: Slim `routes/admin.ts` to < 80 行 + 完成 admin PR**
+- [x] **Unit 4: Slim `routes/admin.ts` to < 80 行 + 完成 admin PR**
 
 **Goal:** 將 admin.ts 改為純薄 controller。每個 endpoint 變成「parse → 委派 → 映射」3-5 行，總行數 < 80。
 
