@@ -1,10 +1,6 @@
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
 import { logger } from '../utils/logger';
-import { allAdapters } from '../adapters/index';
 import { db } from '../db';
-import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
 import {
   // credential-store (PR #19)
@@ -23,14 +19,17 @@ import {
   // roi-config (Unit 1)
   getPlatformHealth,
   updateRoiConfig,
+  // browser-auth (Unit 2)
+  prepareBrowserLogin,
+  beginBrowserLoginSession,
+  prepareBrowserTest,
+  beginBrowserTestSession,
+  getBrowserSessionStatus,
 } from '../services/admin';
 import {
-  AUTH_DIR,
-  getBrowserAuthMode,
   isBrowserAutomationEnabled,
   hasSavedBrowserSession,
   getAdapterId,
-  createBrowserAuthContext,
 } from '../services/browser-session';
 import { isOAuthConfigured } from '../services/google-oauth';
 // Importing twitter-oauth registers twitterAuthStrategy for the platform
@@ -83,148 +82,42 @@ router.post('/api/v2/precheck', syncRoute((req, res) => {
   res.json(result.result);
 }));
 
-router.post('/api/auth/browser', async (req, res) => {
-  if (!isBrowserAutomationEnabled()) {
-    return res.status(403).json({
-      error: 'Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true in .env only when you intentionally want to open controlled browser login windows.'
-    });
-  }
-
-  const { platform } = req.body;
-  const adapter: any = allAdapters.find(a => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === platform);
-
-  const loginUrlMap: Record<string, string> = {
-    'medium':           'https://medium.com/m/signin',
-    'devto':            'https://dev.to/enter',
-    'google':           'https://accounts.google.com/',
-    'blogger':          'https://accounts.google.com/',
-    'substack':         'https://substack.com/sign-in',
-    'indiehackers':     'https://www.indiehackers.com/sign-in',
-    'quora':            'https://www.quora.com/',
-    'producthunt':      'https://www.producthunt.com/login',
-    'ztndz':            'https://ztndz.com/login',
-    'yoursocialpeople': 'https://yoursocialpeople.com/login',
-    'zopedirectory':    'https://www.zopedirectory.com/login',
-    'zeddirectory':     'https://www.zed-directory.com/login',
-    'youslade':         'https://youslade.com/login',
+// Security gate: ENABLE_BROWSER_AUTOMATION must be true. The 403 lives in the
+// controller (HTTP precondition, not business) per Plan Unit 2 invariant.
+function browserAutomationGuard(intent: string): { ok: true } | { ok: false; status: 403; error: string } {
+  if (isBrowserAutomationEnabled()) return { ok: true };
+  return {
+    ok: false,
+    status: 403,
+    error: `Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true in .env only when you intentionally want to ${intent}.`,
   };
+}
 
-  const loginUrl = loginUrlMap[platform] ?? (adapter?.config?.composeUrl ?? '');
-  if (!loginUrl) {
-    const platformName = adapter?.name || platform;
-    return res.status(400).json({
-      error: `${platformName} does not support browser OAuth in this app. Configure it in Publishing Platforms with its API token/application password instead.`
-    });
-  }
+router.post('/api/auth/browser', async (req, res) => {
+  const guard = browserAutomationGuard('open controlled browser login windows');
+  if (!guard.ok) return res.status(guard.status).json({ error: guard.error });
 
-  try {
-    const authSession = await createBrowserAuthContext(platform);
-    const context = authSession.context;
-    const page = await acquirePage(context);
+  const result = await prepareBrowserLogin(req.body?.platform);
+  if (!result.ok) return res.status(result.status ?? 500).json({ error: result.error });
 
-    res.json({ success: true, message: `Opened ${authSession.mode} for ${platform}. Please log in and close the window to save your session.` });
-
-    await page.goto(loginUrl);
-
-    const authFilePath = path.join(AUTH_DIR, `${platform}.json`);
-    const saveInterval = setInterval(async () => {
-      try {
-        if (context && authSession.isConnected()) {
-          await context.storageState({ path: authFilePath });
-        } else {
-          clearInterval(saveInterval);
-        }
-      } catch(e) {
-        clearInterval(saveInterval);
-      }
-    }, 2000);
-
-    context.on('close', () => {
-      clearInterval(saveInterval);
-      logger.success(`Browser closed for ${platform}. Cookies were saved periodically.`);
-    });
-
-  } catch (error: any) {
-    logger.error('Browser Auth Error', error);
-    const message = error?.message || 'Browser auth failed';
-    const profileHint = getBrowserAuthMode() === 'chrome-profile'
-      ? ' If you selected common Chrome profile mode, close all Chrome windows first or switch to Installed Chrome, separate profile.'
-      : '';
-    if (!res.headersSent) res.status(500).json({ error: `${message}${profileHint}` });
-  }
+  res.json({ success: true, message: result.message });
+  // Fire-and-forget: response already sent. Errors only go to logger.
+  beginBrowserLoginSession(result.session!).catch(e => logger.error('beginBrowserLoginSession failed', e));
 });
 
 router.post('/api/auth/test', async (req, res) => {
-  if (!isBrowserAutomationEnabled()) {
-    return res.status(403).json({
-      error: 'Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true in .env only when you intentionally want to test saved browser sessions.'
-    });
-  }
+  const guard = browserAutomationGuard('test saved browser sessions');
+  if (!guard.ok) return res.status(guard.status).json({ error: guard.error });
 
-  const { platform } = req.body;
-  const authFile = path.join(AUTH_DIR, `${platform}.json`);
+  const result = await prepareBrowserTest(req.body?.platform);
+  if (!result.ok) return res.status(result.status ?? 500).json({ error: result.error });
 
-  if (!fs.existsSync(authFile)) {
-    return res.status(400).json({ error: `No saved session found for ${platform}. Please Connect first.` });
-  }
-
-  const adapter: any = allAdapters.find(a => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === platform);
-  const testUrl = adapter?.config?.composeUrl || 'https://google.com';
-
-  try {
-    const authSession = await createBrowserAuthContext(platform);
-    const context = authSession.context;
-    const page = await acquirePage(context);
-
-    res.json({ success: true, message: `Testing ${platform} session in ${authSession.mode}. If you see the editor/dashboard, your cookies are valid!` });
-
-    await page.goto(testUrl);
-
-    page.on('close', async () => {
-      releasePage(page).catch(() => {});
-      try {
-        await context.storageState({ path: authFile });
-      } catch(e) {}
-      await authSession.close();
-    });
-  } catch (error: any) {
-    logger.error('Browser Test Auth Error', error);
-    const message = error?.message || 'Browser test failed';
-    const profileHint = getBrowserAuthMode() === 'chrome-profile'
-      ? ' If you selected common Chrome profile mode, close all Chrome windows first or switch to Installed Chrome, separate profile.'
-      : '';
-    if (!res.headersSent) res.status(500).json({ error: `${message}${profileHint}` });
-  }
+  res.json({ success: true, message: result.message });
+  beginBrowserTestSession(result.session!).catch(e => logger.error('beginBrowserTestSession failed', e));
 });
 
-// GET /api/auth/browser/status/:platform — lightweight poll for login completion
-// Returns { exists, cookieCount, mtime } without launching a browser.
-// Frontend uses cookieCount >= MIN_AUTH_COOKIES as the "logged-in" signal.
-const MIN_AUTH_COOKIES = 5;
-
 router.get('/api/auth/browser/status/:platform', syncRoute((req, res) => {
-  const cleanId = String(req.params.platform).toLowerCase().replace(/[^a-z0-9]/g, '');
-  const authFile = path.join(AUTH_DIR, `${cleanId}.json`);
-
-  try {
-    const stat = fs.statSync(authFile);
-    const raw = fs.readFileSync(authFile, 'utf-8');
-    let cookieCount = 0;
-    try {
-      const parsed = JSON.parse(raw);
-      cookieCount = Array.isArray(parsed.cookies) ? parsed.cookies.length : 0;
-    } catch { /* malformed JSON, cookieCount stays 0 */ }
-
-    res.json({
-      exists: true,
-      cookieCount,
-      minAuthCookies: MIN_AUTH_COOKIES,
-      mtime: stat.mtimeMs,
-      platform: cleanId,
-    });
-  } catch {
-    res.json({ exists: false, cookieCount: 0, minAuthCookies: MIN_AUTH_COOKIES, mtime: null, platform: cleanId });
-  }
+  res.json(getBrowserSessionStatus(String(req.params.platform)));
 }));
 
 // PATCH /api/platforms/:platformId/api-key — update and validate API key
