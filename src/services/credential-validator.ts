@@ -1,8 +1,21 @@
+/**
+ * services/credential-validator.ts
+ *
+ * 24h background task that validates every stored API key against its adapter
+ * via testConnection() and writes the result to brand_profiles.platform_test_status.
+ *
+ * The env-injection / snapshot / restore mechanic was historically duplicated
+ * here. Plan 2026-05-07-002 Unit 3 consolidated it into
+ * `services/admin/credential-store.ts`. This file now decrypts the stored key
+ * and delegates to `testCredentialAgainstAdapter` with `keepOnSuccess: false`.
+ */
+
 import type Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { allAdapters } from '../adapters/index';
 import { getAdapterId } from './browser-session';
 import { decryptApiKey } from '../utils/encryption';
+import { testCredentialAgainstAdapter } from './admin/credential-store';
 
 export interface CredentialValidationResult {
   platformId: string;
@@ -10,41 +23,6 @@ export interface CredentialValidationResult {
   ok: boolean;
   error?: string;
   tested_at: string;
-}
-
-async function testSingleCredential(
-  adapter: any,
-  encryptedKey: string,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const apiKey = decryptApiKey(encryptedKey);
-    const originalEnv = { ...process.env };
-
-    const envKeyMap: Record<string, string> = {
-      'devto': 'DEVTO_API_KEY',
-      'medium': 'MEDIUM_INTEGRATION_TOKEN',
-      'hashnode': 'HASHNODE_TOKEN',
-      'github': 'GITHUB_TOKEN',
-      'blogger': 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-      'wordpress': 'WORDPRESS_SITE_URL',
-      'telegraph': 'TELEGRA_PH_TOKEN',
-    };
-
-    const platformId = getAdapterId(adapter);
-    const envVar = envKeyMap[platformId];
-
-    if (!envVar) {
-      return { ok: false, error: 'Platform not supported for validation' };
-    }
-
-    process.env[envVar] = apiKey;
-    const result = await adapter.testConnection();
-    process.env = originalEnv;
-
-    return result;
-  } catch (err: any) {
-    return { ok: false, error: err?.message ?? 'Unknown error' };
-  }
 }
 
 export async function validateAllCredentials(db: Database.Database): Promise<CredentialValidationResult[]> {
@@ -69,7 +47,7 @@ export async function validateAllCredentials(db: Database.Database): Promise<Cre
     const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
       { platform_test_status?: string } | undefined;
     if (statusRow?.platform_test_status) {
-      try { Object.assign(testStatus, JSON.parse(statusRow.platform_test_status)); } catch (e) {}
+      try { Object.assign(testStatus, JSON.parse(statusRow.platform_test_status)); } catch (e) { /* ignore parse error */ }
     }
 
     // Parallel validation with concurrency limit (3 at a time)
@@ -82,7 +60,20 @@ export async function validateAllCredentials(db: Database.Database): Promise<Cre
         const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
         if (!adapter || adapter.isBrowserAutomation) return null;
 
-        const testResult = await testSingleCredential(adapter, encryptedKey);
+        let plaintext: string;
+        try {
+          plaintext = decryptApiKey(encryptedKey);
+        } catch (e: any) {
+          return {
+            platformId,
+            platform: adapter.name,
+            ok: false,
+            error: 'Failed to decrypt stored credential',
+            tested_at: now,
+          } satisfies CredentialValidationResult;
+        }
+
+        const testResult = await testCredentialAgainstAdapter(adapter, plaintext, { keepOnSuccess: false });
 
         return {
           platformId,
@@ -90,20 +81,13 @@ export async function validateAllCredentials(db: Database.Database): Promise<Cre
           ok: testResult.ok,
           error: testResult.error,
           tested_at: now,
-          adapter,
-        };
+        } satisfies CredentialValidationResult;
       });
 
       const batchResults = await Promise.all(batchPromises);
       for (const result of batchResults) {
         if (!result) continue;
-        results.push({
-          platformId: result.platformId,
-          platform: result.platform,
-          ok: result.ok,
-          error: result.error,
-          tested_at: result.tested_at,
-        });
+        results.push(result);
         testStatus[result.platformId] = {
           connected_at: testStatus[result.platformId]?.connected_at ?? now,
           last_test_error: result.ok ? null : result.error,

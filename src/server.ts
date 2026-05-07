@@ -7,6 +7,7 @@ import { router as publishRouter } from './routes/publish';
 import { router as historyRouter } from './routes/history';
 import { router as authRouter } from './routes/auth';
 import { router as onboardingRouter } from './routes/onboarding';
+import metricsRouter from './routes/metrics';
 
 export const app = express();
 app.use(cors());
@@ -25,3 +26,4 @@ app.use(configRouter);
 app.use(adminRouter);
 app.use(publishRouter);
 app.use(historyRouter);
+app.use('/api', metricsRouter);

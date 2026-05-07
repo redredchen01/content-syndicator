@@ -8,6 +8,7 @@ import { handleDailyDigestJob, seedDailyDigest } from './services/queue/digest-j
 import { handleAggregateSheets, handleReconciliation, seedSheetsJobs } from './services/queue/sheets-jobs';
 import { validateAllCredentials } from './services/credential-validator';
 import { validateEncryptionKey } from './utils/encryption';
+import { cleanup as cleanupVariantCache } from './services/variant-cache';
 import { logger } from './utils/logger';
 
 // Refuse to start in production when ENCRYPTION_KEY is unset/default — this
@@ -31,6 +32,11 @@ scheduler.start();
 seedDailyDigest(db);
 // Seed today's Sheets maintenance jobs (aggregate 04:00, reconcile 04:30)
 seedSheetsJobs(db);
+
+// Hourly variant-cache cleanup — removes expired rows so the table doesn't grow indefinitely.
+// variant-cache.ts exports cleanup() but nothing scheduled it at startup.
+cleanupVariantCache(db); // once at startup (clears leftover expired rows from prior run)
+setInterval(() => cleanupVariantCache(db), 60 * 60 * 1000).unref(); // then every hour
 
 // Background credential validation task (runs every 24 hours)
 let credentialValidationInterval: ReturnType<typeof setInterval> | null = null;

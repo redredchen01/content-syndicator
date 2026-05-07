@@ -2,6 +2,9 @@ import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from
 
 export class DevToAdapter extends BaseAdapter {
   name = 'Dev.to';
+  /** Dev.to has no public OAuth API — only API Keys. UI links here so users
+   *  can generate one in a single click. Verified 2026-05-07. */
+  patGenerationUrl = 'https://dev.to/settings/extensions';
 
   async publish(options: PublishOptions): Promise<PublishResult> {
     const { title, markdownContent, originalUrl, publishStatus = 'draft', tags, excerpt } = options;

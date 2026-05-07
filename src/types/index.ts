@@ -136,6 +136,10 @@ export interface PlatformAdapter {
    *  to browser session-based publishing when no token is configured. UI uses
    *  this to render a secondary "use browser login" link. */
   supportsBrowserFallback?: boolean;
+  /** External URL where the user generates a Personal Access Token (PAT). UI
+   *  renders a "获取 API Key ↗" link next to the connect button when set.
+   *  Used by PAT-only platforms (Dev.to, Hashnode) that lack OAuth APIs. */
+  patGenerationUrl?: string;
   publish(options: PublishOptions): Promise<PublishResult>;
   testConnection?(): Promise<TestConnectionResult>;
 }

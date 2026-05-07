@@ -8,21 +8,36 @@ import { asyncRoute, type Res } from './_helpers';
 import { db } from '../db';
 import { oauthTokens } from '../db/oauth-tokens';
 import {
-  isOAuthConfigured,
-  generateAuthUrl,
-  exchangeCodeForTokens,
   OAUTH_PLATFORM_REGISTRY,
 } from '../services/google-oauth';
+// Import twitter-oauth to trigger self-registration of twitterAuthStrategy.
+import '../services/twitter-oauth';
+// Import wordpress-oauth to trigger self-registration of wordpressAuthStrategy.
+import '../services/wordpress-oauth';
+// Import github-oauth to trigger self-registration of githubAuthStrategy.
+import '../services/github-oauth';
+import {
+  AuthStrategy,
+  getStrategyByProvider,
+} from '../services/auth-strategy';
 import { loopbackOnly } from '../middleware/loopback-only';
 
 export const router = Router();
 
-// ── Google OAuth state map (CSRF protection) ───────────────────────────────
+// ── OAuth state map (CSRF protection, shared across providers) ─────────────
 // Single-process Express, so an in-memory Map is enough. Each entry is
 // one-shot (deleted on first lookup) and expires after 5 minutes.
 // A periodic sweep + a hard cap keep the Map bounded under bursty traffic
 // (e.g. an unauthenticated /start spammer cannot grow it without bound).
-interface PendingState { platform: string; expiresAt: number }
+//
+// `extras` carries provider-specific state-bound data (e.g. PKCE code_verifier
+// for Twitter). Google flow leaves it empty.
+interface PendingState {
+  providerId: string;
+  platform: string;
+  expiresAt: number;
+  extras?: Record<string, unknown>;
+}
 const pendingStates = new Map<string, PendingState>();
 const STATE_TTL_MS = 5 * 60 * 1000;
 const STATE_MAX_ENTRIES = 1000;
@@ -120,106 +135,170 @@ router.post('/api/auth/test-connection/:platformId', async (req: Request, res: R
   }
 });
 
-// ── Google OAuth user-flow ─────────────────────────────────────────────────
+// ── OAuth user-flows (per-provider routes share these helpers) ────────────
 
-// GET /api/auth/google/start?platform=blogger — kick off OAuth consent flow
-// Loopback-only: this is an ops action that initiates a credential-binding
-// flow on the operator's behalf. /callback stays open (Google must reach it;
-// the state cookie + one-shot Map provides CSRF protection).
-router.get('/api/auth/google/start', loopbackOnly, asyncRoute(async (req, res) => {
-  if (!isOAuthConfigured()) {
-    return res.status(503).json({
-      error: 'Google OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID, ' +
-        'GOOGLE_OAUTH_CLIENT_SECRET, and OAUTH_REDIRECT_URI in .env.',
-    });
-  }
-
-  const platform = String(req.query.platform || '').toLowerCase();
-  const config = OAUTH_PLATFORM_REGISTRY[platform];
-  if (!config) {
-    return res.status(400).json({
-      error: `Unknown OAuth platform: ${platform}. Supported: ${Object.keys(OAUTH_PLATFORM_REGISTRY).join(', ')}`,
-    });
-  }
-  const scopes = config.scopes;
-
-  pruneExpiredStates();
-  if (pendingStates.size >= STATE_MAX_ENTRIES) {
-    logger.warn(`[OAuth] pendingStates at cap (${STATE_MAX_ENTRIES}); rejecting /start`);
-    return res.status(429).json({
-      error: 'Too many concurrent OAuth flows. Please retry shortly.',
-    });
-  }
-  const state = crypto.randomBytes(32).toString('hex');
-  pendingStates.set(state, { platform, expiresAt: Date.now() + STATE_TTL_MS });
-
-  const url = generateAuthUrl(state, scopes);
-  logger.info(`[OAuth] Starting flow for ${platform}, redirecting to Google`);
-  res.redirect(url);
-}));
-
-// GET /api/auth/google/callback — Google redirects here after consent.
-// Every terminal outcome redirects to /admin.html so the user lands back in
-// the UI rather than on a raw JSON page. Failure modes carry a stable
-// short error code as ?oauth_error= (full message goes to logs only).
 function oauthErrorRedirect(res: Res, code: string) {
   return res.redirect(`/admin.html?oauth_error=${encodeURIComponent(code)}`);
 }
 
-router.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
-  const { code, state, error: oauthError } = req.query;
-
-  if (oauthError) {
-    logger.warn(`[OAuth] User denied or error: ${oauthError}`);
-    // If state was sent alongside an error, clean it up so the Map doesn't
-    // hold dead entries until TTL.
-    if (typeof state === 'string') pendingStates.delete(state);
-    return oauthErrorRedirect(res, String(oauthError).slice(0, 64));
+/** Pure error-code mapper used by the per-provider callback handlers. */
+function classifyExchangeError(
+  message: string,
+): 'no_refresh_token' | 'insufficient_scope' | 'exchange_failed' {
+  if (/insufficient scope/i.test(message)) return 'insufficient_scope';
+  if (/refresh_token/i.test(message) && /(no |did not return|missing)/i.test(message)) {
+    return 'no_refresh_token';
   }
+  return 'exchange_failed';
+}
 
-  if (typeof code !== 'string' || typeof state !== 'string') {
-    return oauthErrorRedirect(res, 'missing_code_or_state');
-  }
+/**
+ * Common /start handler. Resolves the strategy + platform, generates state,
+ * stores any extras the strategy attaches (e.g. PKCE codeVerifier), and
+ * redirects the user to the provider's consent page.
+ */
+function handleOAuthStart(strategy: AuthStrategy, knownPlatforms: string[]) {
+  return asyncRoute(async (req, res) => {
+    if (!strategy.isConfigured()) {
+      return res.status(503).json({
+        error: `${strategy.providerLabel} OAuth not configured. Check the env vars for this provider in .env.`,
+      });
+    }
 
-  pruneExpiredStates();
-  const pending = pendingStates.get(state);
-  if (!pending) {
-    return oauthErrorRedirect(res, 'invalid_state');
-  }
-  // One-shot: delete immediately to prevent replay
-  pendingStates.delete(state);
+    const platform = String(req.query.platform || '').toLowerCase();
+    if (!knownPlatforms.includes(platform)) {
+      return res.status(400).json({
+        error: `Unknown OAuth platform: ${platform}. Supported: ${knownPlatforms.join(', ')}`,
+      });
+    }
 
-  if (pending.expiresAt < Date.now()) {
-    return oauthErrorRedirect(res, 'state_expired');
-  }
+    pruneExpiredStates();
+    if (pendingStates.size >= STATE_MAX_ENTRIES) {
+      logger.warn(`[OAuth] pendingStates at cap (${STATE_MAX_ENTRIES}); rejecting /start`);
+      return res.status(429).json({ error: 'Too many concurrent OAuth flows. Please retry shortly.' });
+    }
 
-  try {
-    const tokens = await exchangeCodeForTokens(code);
-    oauthTokens.save(db, pending.platform, {
-      refresh_token: tokens.refresh_token,
-      access_token: tokens.access_token ?? null,
-      expires_at: tokens.expires_at ?? null,
+    const state = crypto.randomBytes(32).toString('hex');
+    const extras: Record<string, unknown> = {};
+    const url = strategy.generateAuthUrl({
+      state,
+      attach: (data) => Object.assign(extras, data),
     });
-    logger.info(`[OAuth] ${pending.platform} connected successfully`);
-    res.redirect(`/admin.html?connected=${encodeURIComponent(pending.platform)}`);
-  } catch (e: any) {
-    // Log full message server-side; surface only a short stable code in URL
-    // so error.message never leaks into URL/history/referrer logs.
-    logger.error(`[OAuth] Token exchange failed: ${e?.message || e}`);
-    const code = /refresh_token/i.test(e?.message || '') &&
-                 /(no |did not return|missing)/i.test(e?.message || '')
-      ? 'no_refresh_token'
-      : 'exchange_failed';
-    oauthErrorRedirect(res, code);
-  }
-}));
+    pendingStates.set(state, {
+      providerId: strategy.providerId,
+      platform,
+      expiresAt: Date.now() + STATE_TTL_MS,
+      extras: Object.keys(extras).length ? extras : undefined,
+    });
 
-// DELETE /api/auth/oauth/:platform — disconnect (clear stored tokens).
+    logger.info(`[OAuth] Starting ${strategy.providerId} flow for ${platform}`);
+    res.redirect(url);
+  });
+}
+
+/**
+ * Common /callback handler. Validates state, exchanges code, persists tokens,
+ * redirects back to admin.html with a stable error code on any failure.
+ */
+function handleOAuthCallback(expectedProviderId: string) {
+  return asyncRoute(async (req, res) => {
+    const { code, state, error: oauthError } = req.query;
+
+    if (oauthError) {
+      logger.warn(`[OAuth] User denied or error: ${oauthError}`);
+      if (typeof state === 'string') pendingStates.delete(state);
+      return oauthErrorRedirect(res, String(oauthError).slice(0, 64));
+    }
+
+    if (typeof code !== 'string' || typeof state !== 'string') {
+      return oauthErrorRedirect(res, 'missing_code_or_state');
+    }
+
+    pruneExpiredStates();
+    const pending = pendingStates.get(state);
+    if (!pending) return oauthErrorRedirect(res, 'invalid_state');
+
+    // Validate all conditions BEFORE consuming the one-shot token.
+    // Original order deleted first then checked expiry — a refactor could
+    // accidentally re-use a deleted state. Correct order: check, then delete.
+    if (pending.expiresAt < Date.now()) {
+      pendingStates.delete(state);
+      return oauthErrorRedirect(res, 'state_expired');
+    }
+    if (pending.providerId !== expectedProviderId) {
+      pendingStates.delete(state);
+      return oauthErrorRedirect(res, 'invalid_state');
+    }
+    pendingStates.delete(state); // one-shot — consumed after all guards pass
+
+    const strategy = getStrategyByProvider(pending.providerId);
+    if (!strategy) return oauthErrorRedirect(res, 'unknown_provider');
+
+    try {
+      const tokens = await strategy.exchangeCodeForTokens(code, pending.extras);
+      oauthTokens.save(db, pending.platform, {
+        refresh_token: tokens.refresh_token,
+        access_token: tokens.access_token ?? null,
+        expires_at: tokens.expires_at ?? null,
+      });
+      logger.info(`[OAuth] ${pending.platform} connected successfully via ${strategy.providerId}`);
+      res.redirect(`/admin.html?connected=${encodeURIComponent(pending.platform)}`);
+    } catch (e: any) {
+      logger.error(`[OAuth] Token exchange failed (${strategy.providerId}): ${e?.message || e}`);
+      oauthErrorRedirect(res, classifyExchangeError(e?.message || ''));
+    }
+  });
+}
+
+// ── Google OAuth (Blogger) ──────────────────────────────────────────────────
+// loopback-only: ops action that initiates a credential-binding flow.
+// /callback stays open (provider must reach it; state Map handles CSRF).
+router.get(
+  '/api/auth/google/start',
+  loopbackOnly,
+  handleOAuthStart(getStrategyByProvider('google')!, Object.keys(OAUTH_PLATFORM_REGISTRY)),
+);
+router.get('/api/auth/google/callback', handleOAuthCallback('google'));
+
+// ── Twitter / X OAuth ───────────────────────────────────────────────────────
+const TWITTER_PLATFORMS = ['twitter'];
+router.get(
+  '/api/auth/twitter/start',
+  loopbackOnly,
+  handleOAuthStart(getStrategyByProvider('twitter')!, TWITTER_PLATFORMS),
+);
+router.get('/api/auth/twitter/callback', handleOAuthCallback('twitter'));
+
+// ── WordPress.com OAuth ─────────────────────────────────────────────────────
+const WORDPRESS_PLATFORMS = ['wordpress'];
+router.get(
+  '/api/auth/wordpress/start',
+  loopbackOnly,
+  handleOAuthStart(getStrategyByProvider('wordpress')!, WORDPRESS_PLATFORMS),
+);
+router.get('/api/auth/wordpress/callback', handleOAuthCallback('wordpress'));
+
+// ── GitHub OAuth ────────────────────────────────────────────────────────────
+const GITHUB_PLATFORMS = ['github'];
+router.get(
+  '/api/auth/github/start',
+  loopbackOnly,
+  handleOAuthStart(getStrategyByProvider('github')!, GITHUB_PLATFORMS),
+);
+router.get('/api/auth/github/callback', handleOAuthCallback('github'));
+
+// ── DELETE /api/auth/oauth/:platform — disconnect (clear stored tokens) ────
 // Loopback-only: anyone able to hit this can break a connected operator's
 // publishing pipeline by revoking their OAuth row.
+const KNOWN_PLATFORMS = new Set([
+  ...Object.keys(OAUTH_PLATFORM_REGISTRY),
+  ...TWITTER_PLATFORMS,
+  ...WORDPRESS_PLATFORMS,
+  ...GITHUB_PLATFORMS,
+]);
 router.delete('/api/auth/oauth/:platform', loopbackOnly, asyncRoute(async (req, res) => {
   const platform = String(req.params.platform).toLowerCase();
-  if (!OAUTH_PLATFORM_REGISTRY[platform]) {
+  if (!KNOWN_PLATFORMS.has(platform)) {
     return res.status(400).json({ ok: false, error: `Unknown OAuth platform: ${platform}` });
   }
   oauthTokens.delete(db, platform);

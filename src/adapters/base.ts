@@ -10,6 +10,10 @@ export abstract class BaseAdapter implements PlatformAdapter {
   isBrowserAutomation?: boolean;
   canPublishAutomatically?: boolean;
   supportsBrowserFallback?: boolean;
+  /** External URL where the user generates a Personal Access Token (PAT) for
+   *  this platform. PAT-only platforms (no OAuth API) set this so admin.html
+   *  can render a "获取 API Key ↗" link next to the connect button. */
+  patGenerationUrl?: string;
   abstract publish(options: PublishOptions): Promise<PublishResult>;
 
   protected ok(publishedUrl: string): PublishResult {

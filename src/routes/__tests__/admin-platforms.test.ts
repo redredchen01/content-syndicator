@@ -56,6 +56,17 @@ describe('GET /api/platforms', () => {
     expect(blogger.supportsOAuth).toBe(true);
     expect(typeof blogger.oauthConfigured).toBe('boolean');
     expect(typeof blogger.oauthConnected).toBe('boolean');
+    expect(blogger.oauthProviderId).toBe('google');
+    expect(blogger.oauthProviderLabel).toBe('Google');
+  });
+
+  it('marks Twitter as supportsOAuth with providerId=twitter and label=X', async () => {
+    const res = await request(app).get('/api/platforms');
+    const twitter = res.body.platforms.find((p: any) => p.name === 'Twitter');
+    expect(twitter).toBeDefined();
+    expect(twitter.supportsOAuth).toBe(true);
+    expect(twitter.oauthProviderId).toBe('twitter');
+    expect(twitter.oauthProviderLabel).toBe('X');
   });
 
   it('marks Medium as supportsBrowserFallback', async () => {
@@ -79,6 +90,26 @@ describe('GET /api/platforms', () => {
       expect(p).toHaveProperty('browserSessionExists');
       expect(typeof p.browserSessionExists).toBe('boolean');
     }
+  });
+
+  it('includes patGenerationUrl field for every platform (null when not set)', async () => {
+    const res = await request(app).get('/api/platforms');
+    for (const p of res.body.platforms) {
+      expect(p).toHaveProperty('patGenerationUrl');
+      // Either a non-empty URL string or null — never undefined
+      expect(p.patGenerationUrl === null || typeof p.patGenerationUrl === 'string').toBe(true);
+      if (typeof p.patGenerationUrl === 'string') {
+        expect(p.patGenerationUrl.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('returns null patGenerationUrl for OAuth-first platforms (Blogger, Twitter)', async () => {
+    const res = await request(app).get('/api/platforms');
+    const blogger = res.body.platforms.find((p: any) => p.name === 'Blogger');
+    const twitter = res.body.platforms.find((p: any) => p.name === 'Twitter');
+    expect(blogger.patGenerationUrl).toBeNull();
+    expect(twitter.patGenerationUrl).toBeNull();
   });
 });
 

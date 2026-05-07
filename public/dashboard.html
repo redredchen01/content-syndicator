@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>性能监控仪表板 - Debug Optimization System</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      color: #333;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: white;
+      padding: 20px 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    h1 {
+      font-size: 24px;
+      color: #1a73e8;
+    }
+
+    .controls {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+
+    select, button {
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      background: white;
+      transition: all 0.2s;
+    }
+
+    select:hover, button:hover {
+      border-color: #1a73e8;
+      background: #f0f7ff;
+    }
+
+    button {
+      background: #1a73e8;
+      color: white;
+      border: none;
+    }
+
+    button.secondary {
+      background: white;
+      color: #1a73e8;
+      border: 1px solid #1a73e8;
+    }
+
+    .metrics-panel {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .metric-card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .metric-value {
+      font-size: 28px;
+      font-weight: bold;
+      color: #1a73e8;
+      margin-bottom: 5px;
+    }
+
+    .metric-unit {
+      font-size: 12px;
+      color: #999;
+    }
+
+    .status-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    .status-good { background: #34a853; }
+    .status-warn { background: #fbbc04; }
+    .status-error { background: #ea4335; }
+
+    .charts-section {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .chart-container {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .chart-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .chart {
+      width: 100%;
+      height: 300px;
+    }
+
+    .anomalies-panel {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+
+    .anomalies-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .anomaly-item {
+      padding: 12px;
+      border-left: 3px solid #fbbc04;
+      background: #fffbf0;
+      margin-bottom: 10px;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .anomaly-item.high {
+      border-left-color: #ea4335;
+      background: #fef7f6;
+    }
+
+    .anomaly-text {
+      flex: 1;
+    }
+
+    .anomaly-op {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 3px;
+    }
+
+    .anomaly-detail {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .anomaly-btn {
+      padding: 6px 12px;
+      font-size: 12px;
+      background: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .analysis-panel {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .analysis-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .analysis-form {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
+    .analysis-form input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .diagnosis-result {
+      margin-top: 15px;
+      padding: 15px;
+      background: #f5f7fa;
+      border-radius: 4px;
+      border-left: 3px solid #1a73e8;
+    }
+
+    .diagnosis-primary {
+      font-weight: 600;
+      color: #1a73e8;
+      margin-bottom: 10px;
+    }
+
+    .factors, .recommendations {
+      margin-top: 10px;
+    }
+
+    .factor-item, .rec-item {
+      padding: 10px;
+      background: white;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .factor-type {
+      display: inline-block;
+      padding: 2px 6px;
+      background: #1a73e8;
+      color: white;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-right: 5px;
+    }
+
+    .loading, .error {
+      text-align: center;
+      padding: 30px;
+      font-size: 14px;
+    }
+
+    .loading {
+      color: #1a73e8;
+    }
+
+    .error {
+      color: #ea4335;
+      background: #fef7f6;
+      border-radius: 4px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #1a73e8;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .refresh-indicator {
+      font-size: 12px;
+      color: #999;
+      margin-left: auto;
+    }
+
+    .time-range-display {
+      font-size: 12px;
+      color: #666;
+      margin: 0 15px;
+    }
+
+    @media (max-width: 768px) {
+      header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: flex-start;
+      }
+
+      .controls {
+        width: 100%;
+        flex-wrap: wrap;
+      }
+
+      .charts-section {
+        grid-template-columns: 1fr;
+      }
+
+      .metrics-panel {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📊 性能监控仪表板</h1>
+      <div class="controls">
+        <label>时间范围：</label>
+        <select id="timeRange">
+          <option value="1h">最近 1 小时</option>
+          <option value="6h">最近 6 小时</option>
+          <option value="24h">最近 24 小时</option>
+        </select>
+        <button class="secondary" onclick="refreshData()">刷新</button>
+        <label class="refresh-indicator" id="refreshIndicator"></label>
+      </div>
+    </header>
+
+    <div class="metrics-panel" id="metricsPanel">
+      <div class="metric-card">
+        <div class="metric-label">操作数</div>
+        <div class="metric-value" id="operationCount">-</div>
+        <div class="metric-unit">total</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">平均延迟</div>
+        <div class="metric-value" id="avgLatency">-</div>
+        <div class="metric-unit">ms</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">错误率</div>
+        <div class="metric-value" id="errorRate">-</div>
+        <div class="metric-unit">%</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">系统状态</div>
+        <div class="metric-value" id="systemHealth" style="font-size: 14px; margin-top: 8px;">
+          <span class="status-indicator status-good"></span><span id="healthStatus">正常</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts-section">
+      <div class="chart-container">
+        <div class="chart-title">延迟趋势 (ms)</div>
+        <div id="latencyChart" class="chart"></div>
+      </div>
+      <div class="chart-container">
+        <div class="chart-title">错误率趋势 (%)</div>
+        <div id="errorRateChart" class="chart"></div>
+      </div>
+    </div>
+
+    <div class="anomalies-panel" id="anomaliesPanel" style="display: none;">
+      <div class="anomalies-title">🚨 异常告警</div>
+      <div id="anomaliesList"></div>
+    </div>
+
+    <div class="analysis-panel">
+      <div class="analysis-title">🔍 根因分析</div>
+      <div class="analysis-form">
+        <input type="text" id="analysisOperation" placeholder="输入操作名称，如 services.publish.start">
+        <button onclick="analyzeOperation()">分析</button>
+      </div>
+      <div id="analysisResult"></div>
+    </div>
+  </div>
+
+  <script src="/dashboard.js"></script>
+</body>
+</html>

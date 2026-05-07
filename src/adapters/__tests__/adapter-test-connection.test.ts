@@ -9,6 +9,7 @@ import {
   TelegraphAdapter,
   BrowserAutomationAdapter,
 } from '../index';
+import { InstapaperAdapter } from '../instapaper';
 
 // Mock fetch
 global.fetch = vi.fn();
@@ -35,6 +36,10 @@ describe('API Adapter testConnection()', () => {
 
   describe('Dev.to Adapter', () => {
     const adapter = new DevToAdapter();
+
+    it('exposes patGenerationUrl pointing to Dev.to settings', () => {
+      expect(adapter.patGenerationUrl).toBe('https://dev.to/settings/extensions');
+    });
 
     it('returns ok=true when API key is valid', async () => {
       process.env.DEVTO_API_KEY = 'test_key_123';
@@ -138,6 +143,10 @@ describe('API Adapter testConnection()', () => {
 
   describe('Hashnode Adapter', () => {
     const adapter = new HashnodeAdapter();
+
+    it('exposes patGenerationUrl pointing to Hashnode developer settings', () => {
+      expect(adapter.patGenerationUrl).toBe('https://hashnode.com/settings/developer');
+    });
 
     it('returns ok=true when credentials are valid', async () => {
       process.env.HASHNODE_TOKEN = 'token123';
@@ -276,7 +285,7 @@ describe('API Adapter testConnection()', () => {
       process.env.WORDPRESS_APP_PASSWORD = 'pass123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/Connect with WordPress|WORDPRESS_SITE_URL/);
     });
 
     it('returns error when username is missing', async () => {
@@ -284,7 +293,7 @@ describe('API Adapter testConnection()', () => {
       process.env.WORDPRESS_APP_PASSWORD = 'pass123';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/Connect with WordPress|WORDPRESS_USERNAME/);
     });
 
     it('returns error when app password is missing', async () => {
@@ -292,7 +301,7 @@ describe('API Adapter testConnection()', () => {
       process.env.WORDPRESS_USERNAME = 'admin';
       const result = await adapter.testConnection();
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.error).toMatch(/Connect with WordPress|WORDPRESS_APP_PASSWORD/);
     });
 
     it('returns error on authentication failure', async () => {
@@ -506,5 +515,109 @@ describe('testConnection() edge cases', () => {
     const result = await adapter.testConnection();
     expect(result.ok).toBe(false);
     expect(typeof result.error).toBe('string');
+  });
+});
+
+// ── Instapaper Adapter ────────────────────────────────────────────────────────
+
+describe('Instapaper Adapter', () => {
+  const adapter = new InstapaperAdapter();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.INSTAPAPER_USERNAME;
+    delete process.env.INSTAPAPER_PASSWORD;
+  });
+
+  afterEach(() => {
+    delete process.env.INSTAPAPER_USERNAME;
+    delete process.env.INSTAPAPER_PASSWORD;
+  });
+
+  describe('testConnection', () => {
+    it('returns error when credentials are missing', async () => {
+      const result = await adapter.testConnection();
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('INSTAPAPER_USERNAME');
+    });
+
+    it('returns ok=true when both env vars are set', async () => {
+      process.env.INSTAPAPER_USERNAME = 'user@example.com';
+      process.env.INSTAPAPER_PASSWORD = 'secret';
+      const result = await adapter.testConnection();
+      expect(result.ok).toBe(true);
+    });
+
+    it('returns error when only username is set', async () => {
+      process.env.INSTAPAPER_USERNAME = 'user@example.com';
+      const result = await adapter.testConnection();
+      expect(result.ok).toBe(false);
+    });
+  });
+
+  describe('publish', () => {
+    beforeEach(() => {
+      process.env.INSTAPAPER_USERNAME = 'user@example.com';
+      process.env.INSTAPAPER_PASSWORD = 'secret';
+    });
+
+    it('returns success on HTTP 201', async () => {
+      (global.fetch as any).mockResolvedValueOnce({ status: 201 });
+      const result = await adapter.publish({
+        title: 'My Article',
+        markdownContent: 'content',
+        originalUrl: 'https://example.com/article',
+      });
+      expect(result.success).toBe(true);
+      expect(result.publishedUrl).toContain('instapaper.com');
+    });
+
+    it('returns success on HTTP 200 (already saved)', async () => {
+      (global.fetch as any).mockResolvedValueOnce({ status: 200 });
+      const result = await adapter.publish({
+        title: 'Article',
+        markdownContent: 'content',
+        originalUrl: 'https://example.com/article',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('returns error when originalUrl is missing', async () => {
+      const result = await adapter.publish({ title: 'No URL', markdownContent: 'content' });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('originalUrl');
+    });
+
+    it('returns error on non-2xx response', async () => {
+      (global.fetch as any).mockResolvedValueOnce({ status: 403 });
+      const result = await adapter.publish({
+        title: 'Article',
+        markdownContent: 'content',
+        originalUrl: 'https://example.com/article',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('403');
+    });
+
+    it('returns error on network failure', async () => {
+      (global.fetch as any).mockRejectedValueOnce(new Error('Network error'));
+      const result = await adapter.publish({
+        title: 'Article',
+        markdownContent: 'content',
+        originalUrl: 'https://example.com/article',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('sends Authorization header with Basic auth', async () => {
+      (global.fetch as any).mockResolvedValueOnce({ status: 201 });
+      await adapter.publish({
+        title: 'Article',
+        markdownContent: 'content',
+        originalUrl: 'https://example.com/article',
+      });
+      const call = (global.fetch as any).mock.calls[0];
+      expect(call[1].headers.Authorization).toMatch(/^Basic /);
+    });
   });
 });

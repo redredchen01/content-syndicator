@@ -1,646 +1,71 @@
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
 import { logger } from '../utils/logger';
-import { PlatformAdapter } from '../adapters/base';
-import { allAdapters } from '../adapters/index';
-import { db } from '../db';
-import { getProfile, saveProfile, isReadyForDispatch, updatePreferredPlatforms, getPreferredPlatforms } from '../services/brand-profile';
-import { runPrecheck } from '../services/anchor-monitor';
-import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
-import { encryptApiKey, decryptApiKey } from '../utils/encryption';
-import { computePlatformHealth, getDaTierConfig } from '../services/roi-scorer';
-import { MVP_PLATFORMS } from '../constants';
 import {
-  AUTH_DIR,
-  getBrowserAuthMode,
-  isBrowserAutomationEnabled,
-  hasSavedBrowserSession,
-  getAdapterId,
-  createBrowserAuthContext,
-} from '../services/browser-session';
-import { isOAuthConfigured, isOAuthSupported } from '../services/google-oauth';
-import { oauthTokens } from '../db/oauth-tokens';
-
-export { getAdapterId, hasSavedBrowserSession };
+  db, isBrowserAutomationEnabled,
+  updateApiKey, batchValidateApiKeys, getAllPlatformStatuses,
+  getBrandProfileWithDispatch, saveBrandProfileFromInput, runPrecheckForDispatch,
+  updatePreferredPlatformsForBrand, getPreferredPlatformsForBrand,
+  getPlatformHealth, updateRoiConfig,
+  prepareBrowserLogin, beginBrowserLoginSession,
+  prepareBrowserTest, beginBrowserTestSession, getBrowserSessionStatus,
+} from '../services/admin';
 
 export const router = express.Router();
 
-// Data-driven connectivity check — add new platforms here only
-const API_CONNECTED: Record<string, () => boolean> = {
-  'Telegra.ph':  () => true,
-  'Dev.to':      () => Boolean(process.env.DEVTO_API_KEY),
-  'Medium':      () => Boolean(process.env.MEDIUM_INTEGRATION_TOKEN),
-  'Hashnode':    () => Boolean(process.env.HASHNODE_TOKEN && process.env.HASHNODE_PUBLICATION_ID),
-  'GitHub':      () => Boolean(process.env.GITHUB_TOKEN),
-  'Blogger':     () => Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && process.env.BLOGGER_BLOG_ID),
-  'WordPress':   () => Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD),
-  'Twitter':     () => Boolean(process.env.TWITTER_CONSUMER_KEY && process.env.TWITTER_CONSUMER_SECRET && process.env.TWITTER_ACCESS_TOKEN && process.env.TWITTER_ACCESS_TOKEN_SECRET),
-  'Instapaper':  () => Boolean(process.env.INSTAPAPER_USERNAME && process.env.INSTAPAPER_PASSWORD),
+// HTTP precondition: ENABLE_BROWSER_AUTOMATION gate stays in controller (not service) per Plan Unit 2.
+const browserGuard = (intent: string) => isBrowserAutomationEnabled() ? null
+  : { status: 403, body: { error: `Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true in .env only when you intentionally want to ${intent}.` } };
+const okErrorAsync = (label: string, fn: (req: express.Request, res: express.Response) => Promise<unknown>) => async (req: express.Request, res: express.Response) => {
+  try { await fn(req, res); } catch (e: any) { logger.error(`[Admin] ${label}`, e); if (!res.headersSent) res.status(500).json({ ok: false, error: e?.message ?? label }); }
 };
 
-function hasStoredApiKey(platformId: string): boolean {
-  try {
-    const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
-      { api_keys_encrypted?: string } | undefined;
-    if (result?.api_keys_encrypted) {
-      const apiKeys = JSON.parse(result.api_keys_encrypted);
-      return Boolean(apiKeys[platformId]);
-    }
-  } catch (e) {
-    logger.warn(`Failed to check stored API key for ${platformId}`);
-  }
-  return false;
-}
-
-function isAdapterConnected(adapter: PlatformAdapter): boolean {
-  if (adapter.isBrowserAutomation) return isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter);
-  const adapterConnected = API_CONNECTED[adapter.name]?.() ?? false;
-  if (adapterConnected) return true;
-  if (hasStoredApiKey(getAdapterId(adapter))) return true;
-  // OAuth user-flow: a stored refresh_token in oauth_tokens counts as connected
-  if (isOAuthSupported(adapter.name) && oauthTokens.exists(db, getAdapterId(adapter))) {
-    return true;
-  }
-  // Hybrid (Medium): a saved browser session + browser automation enabled
-  if (adapter.supportsBrowserFallback && isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter)) {
-    return true;
-  }
-  return false;
-}
-
-function isDefaultPublishTarget(adapter: PlatformAdapter) {
-  if (!isAdapterConnected(adapter)) return false;
-  if (adapter.isBrowserAutomation) return Boolean(adapter.canPublishAutomatically);
-  return true;
-}
-
-function getPlatformStatus(adapter: PlatformAdapter) {
-  const connected = isAdapterConnected(adapter);
-  const defaultEligible = isDefaultPublishTarget(adapter);
-
-  let reason = '';
-  if (!connected) {
-    reason = adapter.isBrowserAutomation
-      ? (isBrowserAutomationEnabled() ? 'No saved browser session' : 'Browser automation disabled to avoid controlling your desktop browser')
-      : 'Missing required API configuration';
-  } else if (!defaultEligible && adapter.isBrowserAutomation) {
-    reason = 'Login saved, but stable auto-publish selectors are not configured';
-  } else {
-    reason = 'Ready for default auto-publish';
-  }
-
-  // Get test status from database
-  let testStatus: any = { connected_at: null, last_test_error: null, test_timestamp: null };
-  try {
-    const result = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
-      { platform_test_status?: string } | undefined;
-    if (result?.platform_test_status) {
-      const statusMap = JSON.parse(result.platform_test_status);
-      testStatus = statusMap[getAdapterId(adapter)] || testStatus;
-    }
-  } catch (e) {
-    logger.warn(`Failed to read platform test status: ${e}`);
-  }
-
-  return { connected, defaultEligible, reason, ...testStatus };
-}
-
-export function getDefaultPublishingPlatforms() {
-  return allAdapters.filter(isDefaultPublishTarget).map(a => a.name);
-}
-
-export function resolveTargetPlatforms(platforms?: unknown) {
-  if (Array.isArray(platforms) && platforms.length > 0) {
-    return platforms.filter((p): p is string => typeof p === 'string' && p.trim() !== '');
-  }
-  return getDefaultPublishingPlatforms();
-}
-
-router.get('/api/platforms', syncRoute((req, res) => {
-  const oauthConfigured = isOAuthConfigured();
-  const platforms = allAdapters.map(a => {
-    const id = getAdapterId(a);
-    const supportsOAuth = isOAuthSupported(a.name);
-    const oauthConnected = supportsOAuth && oauthTokens.exists(db, id);
-    return {
-      name: a.name,
-      id,
-      ...getPlatformStatus(a),
-      browserAutomation: Boolean(a.isBrowserAutomation),
-      browserAuthSupported: Boolean(a.isBrowserAutomation || a.supportsBrowserFallback),
-      canPublishAutomatically: Boolean(a.canPublishAutomatically || !a.isBrowserAutomation),
-      supportsOAuth,
-      oauthConfigured: supportsOAuth ? oauthConfigured : false,
-      oauthConnected,
-      supportsBrowserFallback: Boolean(a.supportsBrowserFallback),
-      browserSessionExists: hasSavedBrowserSession(a),
-    };
-  });
-  res.json({ platforms, defaults: getDefaultPublishingPlatforms() });
-}));
-
-router.get('/api/v2/brand-profile', syncRoute((_, res) => {
-  const profile = getProfile(db);
-  const dispatch = isReadyForDispatch(db);
-  res.json({ profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
-}));
-
+router.get('/api/platforms', syncRoute((_req, res) => res.json(getAllPlatformStatuses(db))));
+router.get('/api/v2/brand-profile', syncRoute((_, res) => res.json(getBrandProfileWithDispatch(db))));
 router.put('/api/v2/brand-profile', syncRoute((req, res) => {
-  const body = req.body ?? {};
-  if (typeof body !== 'object' || body === null) return res.status(400).json({ error: 'JSON body required' });
-  if (typeof body.name !== 'string' || body.name.trim().length === 0) {
-    return res.status(422).json({ errors: [{ field: 'name', message: '品牌主名不能为空' }] });
-  }
-  const result = saveProfile(db, body);
-  if (!result.ok) return res.status(422).json({ errors: result.errors });
-  const dispatch = isReadyForDispatch(db);
-  res.json({ profile: result.profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
+  const r = saveBrandProfileFromInput(db, req.body);
+  if (!r.ok) return res.status(r.status ?? 422).json(r.status === 400 ? { error: r.errors?.[0]?.message ?? 'Invalid body' } : { errors: r.errors });
+  res.json({ profile: r.profile, dispatchReady: r.dispatchReady, dispatchReport: r.dispatchReport });
 }));
-
 router.post('/api/v2/precheck', syncRoute((req, res) => {
-  const profile = getProfile(db);
-  if (!profile) return res.status(412).json({ error: '品牌资料库未配置，请先访问 /admin.html 填写。' });
-  const { target_urls } = req.body ?? {};
-  const urls: string[] = Array.isArray(target_urls)
-    ? target_urls.filter((u: unknown) => typeof u === 'string')
-    : [];
-  res.json(runPrecheck(db, urls, profile));
+  const r = runPrecheckForDispatch(db, req.body);
+  if (!r.ok) return res.status(r.status ?? 500).json({ error: r.error });
+  res.json(r.result);
 }));
-
-router.post('/api/auth/browser', async (req, res) => {
-  if (!isBrowserAutomationEnabled()) {
-    return res.status(403).json({
-      error: 'Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true in .env only when you intentionally want to open controlled browser login windows.'
-    });
-  }
-
-  const { platform } = req.body;
-  const adapter: any = allAdapters.find(a => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === platform);
-
-  const loginUrlMap: Record<string, string> = {
-    'medium':           'https://medium.com/m/signin',
-    'devto':            'https://dev.to/enter',
-    'google':           'https://accounts.google.com/',
-    'blogger':          'https://accounts.google.com/',
-    'substack':         'https://substack.com/sign-in',
-    'indiehackers':     'https://www.indiehackers.com/sign-in',
-    'quora':            'https://www.quora.com/',
-    'producthunt':      'https://www.producthunt.com/login',
-    'ztndz':            'https://ztndz.com/login',
-    'yoursocialpeople': 'https://yoursocialpeople.com/login',
-    'zopedirectory':    'https://www.zopedirectory.com/login',
-    'zeddirectory':     'https://www.zed-directory.com/login',
-    'youslade':         'https://youslade.com/login',
-  };
-
-  const loginUrl = loginUrlMap[platform] ?? (adapter?.config?.composeUrl ?? '');
-  if (!loginUrl) {
-    const platformName = adapter?.name || platform;
-    return res.status(400).json({
-      error: `${platformName} does not support browser OAuth in this app. Configure it in Publishing Platforms with its API token/application password instead.`
-    });
-  }
-
-  try {
-    const authSession = await createBrowserAuthContext(platform);
-    const context = authSession.context;
-    const page = await acquirePage(context);
-
-    res.json({ success: true, message: `Opened ${authSession.mode} for ${platform}. Please log in and close the window to save your session.` });
-
-    await page.goto(loginUrl);
-
-    const authFilePath = path.join(AUTH_DIR, `${platform}.json`);
-    const saveInterval = setInterval(async () => {
-      try {
-        if (context && authSession.isConnected()) {
-          await context.storageState({ path: authFilePath });
-        } else {
-          clearInterval(saveInterval);
-        }
-      } catch(e) {
-        clearInterval(saveInterval);
-      }
-    }, 2000);
-
-    context.on('close', () => {
-      clearInterval(saveInterval);
-      logger.success(`Browser closed for ${platform}. Cookies were saved periodically.`);
-    });
-
-  } catch (error: any) {
-    logger.error('Browser Auth Error', error);
-    const message = error?.message || 'Browser auth failed';
-    const profileHint = getBrowserAuthMode() === 'chrome-profile'
-      ? ' If you selected common Chrome profile mode, close all Chrome windows first or switch to Installed Chrome, separate profile.'
-      : '';
-    if (!res.headersSent) res.status(500).json({ error: `${message}${profileHint}` });
-  }
-});
-
-router.post('/api/auth/test', async (req, res) => {
-  if (!isBrowserAutomationEnabled()) {
-    return res.status(403).json({
-      error: 'Browser automation is disabled. Set ENABLE_BROWSER_AUTOMATION=true in .env only when you intentionally want to test saved browser sessions.'
-    });
-  }
-
-  const { platform } = req.body;
-  const authFile = path.join(AUTH_DIR, `${platform}.json`);
-
-  if (!fs.existsSync(authFile)) {
-    return res.status(400).json({ error: `No saved session found for ${platform}. Please Connect first.` });
-  }
-
-  const adapter: any = allAdapters.find(a => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === platform);
-  const testUrl = adapter?.config?.composeUrl || 'https://google.com';
-
-  try {
-    const authSession = await createBrowserAuthContext(platform);
-    const context = authSession.context;
-    const page = await acquirePage(context);
-
-    res.json({ success: true, message: `Testing ${platform} session in ${authSession.mode}. If you see the editor/dashboard, your cookies are valid!` });
-
-    await page.goto(testUrl);
-
-    page.on('close', async () => {
-      releasePage(page).catch(() => {});
-      try {
-        await context.storageState({ path: authFile });
-      } catch(e) {}
-      await authSession.close();
-    });
-  } catch (error: any) {
-    logger.error('Browser Test Auth Error', error);
-    const message = error?.message || 'Browser test failed';
-    const profileHint = getBrowserAuthMode() === 'chrome-profile'
-      ? ' If you selected common Chrome profile mode, close all Chrome windows first or switch to Installed Chrome, separate profile.'
-      : '';
-    if (!res.headersSent) res.status(500).json({ error: `${message}${profileHint}` });
-  }
-});
-
-// GET /api/auth/browser/status/:platform — lightweight poll for login completion
-// Returns { exists, cookieCount, mtime } without launching a browser.
-// Frontend uses cookieCount >= MIN_AUTH_COOKIES as the "logged-in" signal.
-const MIN_AUTH_COOKIES = 5;
-
-router.get('/api/auth/browser/status/:platform', syncRoute((req, res) => {
-  const cleanId = String(req.params.platform).toLowerCase().replace(/[^a-z0-9]/g, '');
-  const authFile = path.join(AUTH_DIR, `${cleanId}.json`);
-
-  try {
-    const stat = fs.statSync(authFile);
-    const raw = fs.readFileSync(authFile, 'utf-8');
-    let cookieCount = 0;
-    try {
-      const parsed = JSON.parse(raw);
-      cookieCount = Array.isArray(parsed.cookies) ? parsed.cookies.length : 0;
-    } catch { /* malformed JSON, cookieCount stays 0 */ }
-
-    res.json({
-      exists: true,
-      cookieCount,
-      minAuthCookies: MIN_AUTH_COOKIES,
-      mtime: stat.mtimeMs,
-      platform: cleanId,
-    });
-  } catch {
-    res.json({ exists: false, cookieCount: 0, minAuthCookies: MIN_AUTH_COOKIES, mtime: null, platform: cleanId });
-  }
+router.post('/api/auth/browser', okErrorAsync('Failed to start browser login', async (req, res) => {
+  const g = browserGuard('open controlled browser login windows'); if (g) return res.status(g.status).json(g.body);
+  const r = await prepareBrowserLogin(req.body?.platform); if (!r.ok) return res.status(r.status ?? 500).json({ error: r.error });
+  res.json({ success: true, message: r.message });
+  beginBrowserLoginSession(r.session!).catch(e => logger.error('beginBrowserLoginSession failed', e));
 }));
-
-// PATCH /api/platforms/:platformId/api-key — update and validate API key
-router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
-  try {
-    const { platformId } = req.params;
-    const { apiKey } = req.body ?? {};
-
-    if (typeof apiKey !== 'string' || apiKey.trim().length === 0) {
-      return res.status(400).json({ error: 'API key is required' });
-    }
-
-    // Find adapter
-    const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
-    if (!adapter || adapter.isBrowserAutomation) {
-      return res.status(404).json({ error: 'Platform not found or is browser automation' });
-    }
-
-    logger.info(`[Admin] Testing API key for ${adapter.name}...`);
-
-    // Validate API key by calling testConnection() with the new key.
-    // Map platformId to the environment variable it reads from.
-    // Twitter uses 4 env vars — apiKey must be JSON: {"ck":...,"cs":...,"at":...,"as":...}
-    const envKeyMap: Record<string, string | string[]> = {
-      'devto':       'DEVTO_API_KEY',
-      'medium':      'MEDIUM_INTEGRATION_TOKEN',
-      'hashnode':    'HASHNODE_TOKEN',
-      'github':      'GITHUB_TOKEN',
-      'blogger':     'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-      'wordpress':   'WORDPRESS_SITE_URL',
-      'telegraph':   'TELEGRA_PH_TOKEN',
-      'twitter':     ['TWITTER_CONSUMER_KEY','TWITTER_CONSUMER_SECRET','TWITTER_ACCESS_TOKEN','TWITTER_ACCESS_TOKEN_SECRET'],
-      'instapaper':  'INSTAPAPER_USERNAME',
-    };
-
-    const envVar = envKeyMap[platformId];
-    if (!envVar) {
-      return res.status(404).json({ error: 'Cannot validate this platform type' });
-    }
-
-    // For multi-key platforms (Twitter), apiKey is a JSON object string
-    const prevValues: Record<string, string | undefined> = {};
-    if (Array.isArray(envVar)) {
-      let parsed: Record<string, string>;
-      try { parsed = JSON.parse(apiKey); } catch {
-        return res.status(400).json({ error: 'Twitter requires a JSON object with ck, cs, at, as keys' });
-      }
-      const [ck, cs, at, as_] = envVar;
-      prevValues[ck] = process.env[ck]; prevValues[cs] = process.env[cs];
-      prevValues[at] = process.env[at]; prevValues[as_] = process.env[as_];
-      process.env[ck] = parsed.ck; process.env[cs] = parsed.cs;
-      process.env[at] = parsed.at; process.env[as_] = parsed.as;
-    } else {
-      prevValues[envVar] = process.env[envVar];
-      process.env[envVar] = apiKey;
-    }
-
-    const restoreEnv = () => {
-      for (const [k, v] of Object.entries(prevValues)) {
-        if (v === undefined) delete process.env[k]; else process.env[k] = v;
-      }
-    };
-
-    let testResult: Awaited<ReturnType<NonNullable<typeof adapter.testConnection>>> | undefined;
-    try {
-      testResult = await adapter.testConnection?.();
-    } catch (e: any) {
-      restoreEnv();
-      throw e;
-    }
-
-    if (testResult && !testResult.ok) {
-      restoreEnv();
-      logger.warn(`[Admin] API key validation failed for ${adapter.name}: ${testResult.error}`);
-      return res.status(422).json({ ok: false, error: testResult.error });
-    }
-    // Success: keep the new key in process.env (it is now the active credential)
-
-    // Encrypt and store API key
-    const encrypted = encryptApiKey(apiKey);
-
-    // Get existing API keys
-    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
-      { api_keys_encrypted?: string } | undefined;
-    let apiKeys: Record<string, string> = {};
-    if (profileRow?.api_keys_encrypted) {
-      try { apiKeys = JSON.parse(profileRow.api_keys_encrypted); }
-      catch (e) { logger.warn('Failed to parse existing API keys, starting fresh'); }
-    }
-
-    apiKeys[platformId] = encrypted;
-
-    const now = new Date().toISOString();
-    const testStatus: Record<string, any> = {};
-    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
-      { platform_test_status?: string } | undefined;
-    if (statusRow?.platform_test_status) {
-      try { Object.assign(testStatus, JSON.parse(statusRow.platform_test_status)); } catch (e) {}
-    }
-
-    testStatus[platformId] = {
-      connected_at: now,
-      last_test_error: null,
-      test_timestamp: now,
-    };
-
-    db.prepare(`
-      UPDATE brand_profiles
-      SET api_keys_encrypted = ?, platform_test_status = ?, updated_at = ?
-      WHERE brand_id = 'default'
-    `).run(JSON.stringify(apiKeys), JSON.stringify(testStatus), now);
-
-    logger.info(`[Admin] API key stored successfully for ${adapter.name}`);
-
-    res.json({
-      ok: true,
-      platform: adapter.name,
-      connected_at: now,
-      test_timestamp: now,
-    });
-  } catch (error: any) {
-    logger.error('[Admin] Failed to update API key', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Failed to update API key',
-    });
-  }
-});
-
-// GET /api/v2/platform-health — ROI health for all 7 MVP platforms
-router.get('/api/v2/platform-health', syncRoute((_req, res) => {
-  try {
-    const health = computePlatformHealth(db);
-    return res.json(health);
-  } catch (err) {
-    logger.error('[Admin] computePlatformHealth failed, returning insufficient fallback', {
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    const fallback = (MVP_PLATFORMS as readonly string[]).map((platform) => ({
-      platform,
-      daTierLabel: 'Tier3' as const,
-      daTierScore: 0.3,
-      t7dRate: null,
-      t30dRate: null,
-      roiScore: 0.3,
-      score: 0.3,
-      status: 'insufficient' as const,
-      dataInsufficient: true,
-      coldStart: true,
-    }));
-    return res.json(fallback);
-  }
+router.post('/api/auth/test', okErrorAsync('Failed to start browser test', async (req, res) => {
+  const g = browserGuard('test saved browser sessions'); if (g) return res.status(g.status).json(g.body);
+  const r = await prepareBrowserTest(req.body?.platform); if (!r.ok) return res.status(r.status ?? 500).json({ error: r.error });
+  res.json({ success: true, message: r.message });
+  beginBrowserTestSession(r.session!).catch(e => logger.error('beginBrowserTestSession failed', e));
 }));
-
-const VALID_TIER_SCORES = new Set([0.3, 0.6, 1.0]);
-
-// PATCH /api/v2/roi-config — update DA tier config and threshold
+router.get('/api/auth/browser/status/:platform', syncRoute((req, res) => res.json(getBrowserSessionStatus(String(req.params.platform)))));
+router.patch('/api/platforms/:platformId/api-key', okErrorAsync('Failed to update API key', async (req, res) => {
+  const r = await updateApiKey(db, String(req.params.platformId), req.body?.apiKey);
+  if (!r.ok) { const s = r.status ?? 500; return res.status(s).json(s === 422 || s === 500 ? { ok: false, error: r.error } : { error: r.error }); }
+  res.json({ ok: true, platform: r.platform, connected_at: r.connected_at, test_timestamp: r.test_timestamp });
+}));
+router.get('/api/v2/platform-health', syncRoute((_req, res) => res.json(getPlatformHealth(db))));
 router.patch('/api/v2/roi-config', syncRoute((req, res) => {
-  const { daTierConfig, threshold } = req.body ?? {};
-
-  // Validate threshold
-  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-    return res.status(400).json({ error: 'threshold must be a number between 0 and 1' });
-  }
-
-  // Validate daTierConfig values
-  if (daTierConfig !== undefined && typeof daTierConfig === 'object' && daTierConfig !== null) {
-    for (const [key, val] of Object.entries(daTierConfig as Record<string, unknown>)) {
-      // Validate platform key
-      if (!(MVP_PLATFORMS as readonly string[]).includes(key)) {
-        return res.status(400).json({ error: `Unknown platform: ${key}` });
-      }
-      // Validate tier score value (explicit typeof prevents type coercion attacks)
-      if (typeof val !== 'number' || !VALID_TIER_SCORES.has(val)) {
-        return res.status(400).json({ error: `Invalid tier score for ${key}: must be 0.3, 0.6, or 1.0` });
-      }
-    }
-  }
-
-  // Read existing row
-  const row = db.prepare(
-    `SELECT da_tier_config_json, roi_threshold FROM brand_profiles WHERE brand_id = 'main' LIMIT 1`
-  ).get() as { da_tier_config_json?: string; roi_threshold?: number | null } | undefined;
-
-  if (!row) {
-    return res.status(400).json({ error: 'Brand profile not configured' });
-  }
-
-  // Merge DA tier config
-  let existingTiers: Record<string, number> = {};
-  try {
-    existingTiers = row.da_tier_config_json ? JSON.parse(row.da_tier_config_json) : {};
-  } catch {
-    existingTiers = {};
-  }
-  const mergedTiers = { ...existingTiers, ...(daTierConfig ?? {}) };
-
-  db.prepare(
-    `UPDATE brand_profiles SET da_tier_config_json = ?, roi_threshold = ? WHERE brand_id = 'main'`
-  ).run(JSON.stringify(mergedTiers), threshold);
-
-  logger.info(`[Admin] Updated ROI config: threshold=${threshold}`);
-
-  return res.json({ daTierConfig: mergedTiers, threshold });
+  const r = updateRoiConfig(db, req.body);
+  if (!r.ok) return res.status(r.status ?? 400).json({ error: r.error });
+  res.json({ daTierConfig: r.daTierConfig, threshold: r.threshold });
 }));
-
-// PATCH /api/v2/brand-profile/preferred-platforms — update preferred publishing platforms
-router.patch('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
-  try {
-    const { platforms } = req.body ?? {};
-
-    if (!Array.isArray(platforms)) {
-      return res.status(400).json({ error: 'platforms must be an array' });
-    }
-
-    const result = updatePreferredPlatforms(db, platforms);
-    if (!result.ok) {
-      return res.status(422).json({ error: result.error });
-    }
-
-    const preferred = getPreferredPlatforms(db);
-    logger.info(`[Admin] Updated preferred platforms: ${preferred.join(', ')}`);
-
-    res.json({
-      ok: true,
-      preferredPlatforms: preferred,
-    });
-  } catch (error: any) {
-    logger.error('[Admin] Failed to update preferred platforms', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Failed to update preferred platforms',
-    });
-  }
+router.patch('/api/v2/brand-profile/preferred-platforms', okErrorAsync('Failed to update preferred platforms', async (req, res) => {
+  const r = updatePreferredPlatformsForBrand(db, req.body);
+  if (!r.ok) return res.status(r.status ?? 500).json({ error: r.error });
+  res.json({ ok: true, preferredPlatforms: r.preferredPlatforms });
 }));
-
-// GET /api/v2/brand-profile/preferred-platforms — get current preferred platforms
-router.get('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
-  try {
-    const preferred = getPreferredPlatforms(db);
-    res.json({ preferredPlatforms: preferred });
-  } catch (error: any) {
-    logger.error('[Admin] Failed to get preferred platforms', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Failed to get preferred platforms',
-    });
-  }
+router.get('/api/v2/brand-profile/preferred-platforms', okErrorAsync('Failed to get preferred platforms', async (_req, res) => {
+  res.json({ preferredPlatforms: getPreferredPlatformsForBrand(db) });
 }));
-
-// POST /api/platforms/batch-validate — validate multiple API keys in parallel
-router.post('/api/platforms/batch-validate', async (req, res) => {
-  try {
-    const { credentials } = req.body ?? {};
-    if (!Array.isArray(credentials)) {
-      return res.status(400).json({ error: 'credentials must be an array' });
-    }
-
-    const results = await Promise.all(
-      credentials.map(async (cred: any) => {
-        const platformId = cred.platformId as string;
-        const apiKey = cred.apiKey as string;
-
-        if (typeof platformId !== 'string' || typeof apiKey !== 'string') {
-          return { platformId, ok: false, error: 'Invalid input' };
-        }
-
-        const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
-        if (!adapter || adapter.isBrowserAutomation) {
-          return { platformId, ok: false, error: 'Platform not found or is browser automation' };
-        }
-
-        logger.info(`[Admin] Testing API key for ${adapter.name}...`);
-
-        const envKeyMap: Record<string, string | string[]> = {
-          'devto':      'DEVTO_API_KEY',
-          'medium':     'MEDIUM_INTEGRATION_TOKEN',
-          'hashnode':   'HASHNODE_TOKEN',
-          'github':     'GITHUB_TOKEN',
-          'blogger':    'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-          'wordpress':  'WORDPRESS_SITE_URL',
-          'telegraph':  'TELEGRA_PH_TOKEN',
-          'twitter':    ['TWITTER_CONSUMER_KEY','TWITTER_CONSUMER_SECRET','TWITTER_ACCESS_TOKEN','TWITTER_ACCESS_TOKEN_SECRET'],
-          'instapaper': 'INSTAPAPER_USERNAME',
-        };
-
-        const envVar = envKeyMap[platformId];
-        if (!envVar) {
-          return { platformId, ok: false, error: 'Cannot validate this platform type' };
-        }
-
-        // Batch-validate only tests — always restore the original values afterward.
-        const saved: Record<string, string | undefined> = {};
-        const restore = () => {
-          for (const [k, v] of Object.entries(saved)) {
-            if (v === undefined) delete process.env[k]; else process.env[k] = v;
-          }
-        };
-
-        if (Array.isArray(envVar)) {
-          let parsed: Record<string, string>;
-          try { parsed = JSON.parse(apiKey); } catch {
-            return { platformId, ok: false, error: 'Twitter requires JSON with ck, cs, at, as' };
-          }
-          const [ck, cs, at, as_] = envVar;
-          saved[ck] = process.env[ck]; saved[cs] = process.env[cs];
-          saved[at] = process.env[at]; saved[as_] = process.env[as_];
-          process.env[ck] = parsed.ck; process.env[cs] = parsed.cs;
-          process.env[at] = parsed.at; process.env[as_] = parsed.as;
-        } else {
-          saved[envVar] = process.env[envVar];
-          process.env[envVar] = apiKey;
-        }
-
-        try {
-          const testResult = await adapter.testConnection?.();
-          return { platformId, ok: testResult?.ok ?? true, error: testResult?.error };
-        } finally {
-          restore();
-        }
-      }),
-    );
-
-    res.json({ results });
-  } catch (error: any) {
-    logger.error('[Admin] Batch validation failed', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Batch validation failed',
-    });
-  }
-});
+router.post('/api/platforms/batch-validate', okErrorAsync('Batch validation failed', async (req, res) => {
+  const { credentials } = req.body ?? {};
+  if (!Array.isArray(credentials)) return res.status(400).json({ error: 'credentials must be an array' });
+  res.json({ results: await batchValidateApiKeys(credentials) });
+}));

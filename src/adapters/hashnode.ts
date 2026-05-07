@@ -2,6 +2,9 @@ import { BaseAdapter, PublishResult, PublishOptions, TestConnectionResult } from
 
 export class HashnodeAdapter extends BaseAdapter {
   name = 'Hashnode';
+  /** Hashnode GraphQL API only supports Personal Access Tokens — no OAuth.
+   *  UI links here so users can generate a PAT. Verified 2026-05-07. */
+  patGenerationUrl = 'https://hashnode.com/settings/developer';
 
   async publish(options: PublishOptions): Promise<PublishResult> {
     const { title, markdownContent, originalUrl, tags } = options;
