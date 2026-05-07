@@ -279,8 +279,10 @@ export async function smartRetry<T>(
 export async function retryOperation<T>(
   fn: () => Promise<T>,
   maxAttempts: number = 3,
+  context?: string,
 ): Promise<T> {
   return smartRetry(fn, {
+    context,
     maxAttemptsOverride: maxAttempts,
     onRetry: (_error, attempt, delay) => {
       logger.warn(`[Retry] attempt ${attempt} failed, retrying in ${Math.round(delay)}ms`);

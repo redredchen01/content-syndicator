@@ -55,7 +55,7 @@ async function invokeOpenAIWithTools(options: LLMWithToolsOptions): Promise<LLMR
       tool_calls: message.tool_calls as ToolCall[] | undefined,
       raw: response,
     };
-  }, RETRY_CONFIG.MAX_ATTEMPTS);
+  }, RETRY_CONFIG.MAX_ATTEMPTS, 'openai');
 }
 
 async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMResponse> {
@@ -104,7 +104,7 @@ async function invokeGeminiWithTools(options: LLMWithToolsOptions): Promise<LLMR
       }
       throw e;
     }
-  }, RETRY_CONFIG.MAX_ATTEMPTS);
+  }, RETRY_CONFIG.MAX_ATTEMPTS, 'gemini');
 }
 
 export async function invokeLLMSimple(prompt: string, fallbackContent?: string, fallbackTitle?: string): Promise<any> {

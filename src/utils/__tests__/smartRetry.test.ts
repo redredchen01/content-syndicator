@@ -57,3 +57,33 @@ describe('_resetCircuitBreakers — test isolation', () => {
     expect(_resetCircuitBreakers).not.toThrow();
   });
 });
+
+import { retryOperation } from '../smartRetry';
+
+describe('retryOperation — context isolation', () => {
+  it('openai and gemini contexts have independent circuit breakers', async () => {
+    // Exhaust the openai circuit breaker by making it fail 5 times
+    for (let i = 0; i < 5; i++) {
+      try {
+        await retryOperation(
+          () => Promise.reject(new Error('openai failure')),
+          1,
+          'openai',
+        );
+      } catch {}
+    }
+
+    // Gemini context should still be open (not blocked by openai failures)
+    const result = await retryOperation(
+      () => Promise.resolve('gemini ok'),
+      1,
+      'gemini',
+    );
+    expect(result).toBe('gemini ok');
+  });
+
+  it('retryOperation without context falls back to undefined (shared default)', async () => {
+    const result = await retryOperation(() => Promise.resolve(42));
+    expect(result).toBe(42);
+  });
+});
