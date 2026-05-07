@@ -9,8 +9,11 @@ import { getProfile, saveProfile, isReadyForDispatch, updatePreferredPlatforms, 
 import { runPrecheck } from '../services/anchor-monitor';
 import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
-import { encryptApiKey, decryptApiKey } from '../utils/encryption';
 import { computePlatformHealth, getDaTierConfig } from '../services/roi-scorer';
+import {
+  updateApiKey,
+  batchValidateApiKeys,
+} from '../services/admin';
 import { MVP_PLATFORMS } from '../constants';
 import {
   AUTH_DIR,
@@ -334,125 +337,22 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
   try {
     const { platformId } = req.params;
     const { apiKey } = req.body ?? {};
-
-    if (typeof apiKey !== 'string' || apiKey.trim().length === 0) {
-      return res.status(400).json({ error: 'API key is required' });
+    const result = await updateApiKey(db, platformId, apiKey);
+    if (!result.ok) {
+      const status = result.status ?? 500;
+      // 422 / 500 historically use { ok: false, error } shape; 400 / 404 use { error }.
+      if (status === 422 || status === 500) return res.status(status).json({ ok: false, error: result.error });
+      return res.status(status).json({ error: result.error });
     }
-
-    // Find adapter
-    const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
-    if (!adapter || adapter.isBrowserAutomation) {
-      return res.status(404).json({ error: 'Platform not found or is browser automation' });
-    }
-
-    logger.info(`[Admin] Testing API key for ${adapter.name}...`);
-
-    // Validate API key by calling testConnection() with the new key.
-    // Map platformId to the environment variable it reads from.
-    // Twitter uses 4 env vars — apiKey must be JSON: {"ck":...,"cs":...,"at":...,"as":...}
-    const envKeyMap: Record<string, string | string[]> = {
-      'devto':       'DEVTO_API_KEY',
-      'medium':      'MEDIUM_INTEGRATION_TOKEN',
-      'hashnode':    'HASHNODE_TOKEN',
-      'github':      'GITHUB_TOKEN',
-      'blogger':     'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-      'wordpress':   'WORDPRESS_SITE_URL',
-      'telegraph':   'TELEGRA_PH_TOKEN',
-      'twitter':     ['TWITTER_CONSUMER_KEY','TWITTER_CONSUMER_SECRET','TWITTER_ACCESS_TOKEN','TWITTER_ACCESS_TOKEN_SECRET'],
-      'instapaper':  'INSTAPAPER_USERNAME',
-    };
-
-    const envVar = envKeyMap[platformId];
-    if (!envVar) {
-      return res.status(404).json({ error: 'Cannot validate this platform type' });
-    }
-
-    // For multi-key platforms (Twitter), apiKey is a JSON object string
-    const prevValues: Record<string, string | undefined> = {};
-    if (Array.isArray(envVar)) {
-      let parsed: Record<string, string>;
-      try { parsed = JSON.parse(apiKey); } catch {
-        return res.status(400).json({ error: 'Twitter requires a JSON object with ck, cs, at, as keys' });
-      }
-      const [ck, cs, at, as_] = envVar;
-      prevValues[ck] = process.env[ck]; prevValues[cs] = process.env[cs];
-      prevValues[at] = process.env[at]; prevValues[as_] = process.env[as_];
-      process.env[ck] = parsed.ck; process.env[cs] = parsed.cs;
-      process.env[at] = parsed.at; process.env[as_] = parsed.as;
-    } else {
-      prevValues[envVar] = process.env[envVar];
-      process.env[envVar] = apiKey;
-    }
-
-    const restoreEnv = () => {
-      for (const [k, v] of Object.entries(prevValues)) {
-        if (v === undefined) delete process.env[k]; else process.env[k] = v;
-      }
-    };
-
-    let testResult: Awaited<ReturnType<NonNullable<typeof adapter.testConnection>>> | undefined;
-    try {
-      testResult = await adapter.testConnection?.();
-    } catch (e: any) {
-      restoreEnv();
-      throw e;
-    }
-
-    if (testResult && !testResult.ok) {
-      restoreEnv();
-      logger.warn(`[Admin] API key validation failed for ${adapter.name}: ${testResult.error}`);
-      return res.status(422).json({ ok: false, error: testResult.error });
-    }
-    // Success: keep the new key in process.env (it is now the active credential)
-
-    // Encrypt and store API key
-    const encrypted = encryptApiKey(apiKey);
-
-    // Get existing API keys
-    const profileRow = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
-      { api_keys_encrypted?: string } | undefined;
-    let apiKeys: Record<string, string> = {};
-    if (profileRow?.api_keys_encrypted) {
-      try { apiKeys = JSON.parse(profileRow.api_keys_encrypted); }
-      catch (e) { logger.warn('Failed to parse existing API keys, starting fresh'); }
-    }
-
-    apiKeys[platformId] = encrypted;
-
-    const now = new Date().toISOString();
-    const testStatus: Record<string, any> = {};
-    const statusRow = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
-      { platform_test_status?: string } | undefined;
-    if (statusRow?.platform_test_status) {
-      try { Object.assign(testStatus, JSON.parse(statusRow.platform_test_status)); } catch (e) {}
-    }
-
-    testStatus[platformId] = {
-      connected_at: now,
-      last_test_error: null,
-      test_timestamp: now,
-    };
-
-    db.prepare(`
-      UPDATE brand_profiles
-      SET api_keys_encrypted = ?, platform_test_status = ?, updated_at = ?
-      WHERE brand_id = 'default'
-    `).run(JSON.stringify(apiKeys), JSON.stringify(testStatus), now);
-
-    logger.info(`[Admin] API key stored successfully for ${adapter.name}`);
-
     res.json({
       ok: true,
-      platform: adapter.name,
-      connected_at: now,
-      test_timestamp: now,
+      platform: result.platform,
+      connected_at: result.connected_at,
+      test_timestamp: result.test_timestamp,
     });
   } catch (error: any) {
     logger.error('[Admin] Failed to update API key', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Failed to update API key',
-    });
+    res.status(500).json({ ok: false, error: error?.message ?? 'Failed to update API key' });
   }
 });
 
@@ -585,78 +485,10 @@ router.post('/api/platforms/batch-validate', async (req, res) => {
     if (!Array.isArray(credentials)) {
       return res.status(400).json({ error: 'credentials must be an array' });
     }
-
-    const results = await Promise.all(
-      credentials.map(async (cred: any) => {
-        const platformId = cred.platformId as string;
-        const apiKey = cred.apiKey as string;
-
-        if (typeof platformId !== 'string' || typeof apiKey !== 'string') {
-          return { platformId, ok: false, error: 'Invalid input' };
-        }
-
-        const adapter = allAdapters.find(a => getAdapterId(a) === platformId);
-        if (!adapter || adapter.isBrowserAutomation) {
-          return { platformId, ok: false, error: 'Platform not found or is browser automation' };
-        }
-
-        logger.info(`[Admin] Testing API key for ${adapter.name}...`);
-
-        const envKeyMap: Record<string, string | string[]> = {
-          'devto':      'DEVTO_API_KEY',
-          'medium':     'MEDIUM_INTEGRATION_TOKEN',
-          'hashnode':   'HASHNODE_TOKEN',
-          'github':     'GITHUB_TOKEN',
-          'blogger':    'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-          'wordpress':  'WORDPRESS_SITE_URL',
-          'telegraph':  'TELEGRA_PH_TOKEN',
-          'twitter':    ['TWITTER_CONSUMER_KEY','TWITTER_CONSUMER_SECRET','TWITTER_ACCESS_TOKEN','TWITTER_ACCESS_TOKEN_SECRET'],
-          'instapaper': 'INSTAPAPER_USERNAME',
-        };
-
-        const envVar = envKeyMap[platformId];
-        if (!envVar) {
-          return { platformId, ok: false, error: 'Cannot validate this platform type' };
-        }
-
-        // Batch-validate only tests — always restore the original values afterward.
-        const saved: Record<string, string | undefined> = {};
-        const restore = () => {
-          for (const [k, v] of Object.entries(saved)) {
-            if (v === undefined) delete process.env[k]; else process.env[k] = v;
-          }
-        };
-
-        if (Array.isArray(envVar)) {
-          let parsed: Record<string, string>;
-          try { parsed = JSON.parse(apiKey); } catch {
-            return { platformId, ok: false, error: 'Twitter requires JSON with ck, cs, at, as' };
-          }
-          const [ck, cs, at, as_] = envVar;
-          saved[ck] = process.env[ck]; saved[cs] = process.env[cs];
-          saved[at] = process.env[at]; saved[as_] = process.env[as_];
-          process.env[ck] = parsed.ck; process.env[cs] = parsed.cs;
-          process.env[at] = parsed.at; process.env[as_] = parsed.as;
-        } else {
-          saved[envVar] = process.env[envVar];
-          process.env[envVar] = apiKey;
-        }
-
-        try {
-          const testResult = await adapter.testConnection?.();
-          return { platformId, ok: testResult?.ok ?? true, error: testResult?.error };
-        } finally {
-          restore();
-        }
-      }),
-    );
-
+    const results = await batchValidateApiKeys(credentials);
     res.json({ results });
   } catch (error: any) {
     logger.error('[Admin] Batch validation failed', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Batch validation failed',
-    });
+    res.status(500).json({ ok: false, error: error?.message ?? 'Batch validation failed' });
   }
 });
