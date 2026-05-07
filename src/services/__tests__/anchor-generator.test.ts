@@ -177,10 +177,14 @@ describe('generateAnchors (tier-2 context)', () => {
 
     const calledWith = vi.mocked(invokeLLMWithTools).mock.calls[0][0];
     const renderedMessage = (calledWith.messages as Array<{ content: string }>)[0].content;
-    // summary should be about the intermediate page, not the draft text
+    // summary must describe the intermediate page, not the draft body text
     expect(renderedMessage).toContain('published article on Dev.to');
-    // contextTag should be the tier-2 platform name, not 'home'
+    // contextTag must be the tier-2 platform name, not 'home'
     expect(renderedMessage).toContain('Dev.to');
+    // The tier-2 target URL (not the money page) must appear in the anchor prompt
+    expect(renderedMessage).toContain('https://dev.to/user/some-article');
+    // Draft body text must NOT be used as the anchor article summary
+    expect(renderedMessage).not.toContain(tier2Variant.body_markdown);
     db.close();
   });
 

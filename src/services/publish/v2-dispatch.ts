@@ -59,9 +59,9 @@ function selectTier2Target(
       Date.now() - TIER2_COOLDOWN_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
 
-    const survivors = pool.filter(
-      ({ published_url }) => !anchorHistory.usedAsTier2InWindow(db, published_url, windowIso),
-    );
+    // Single batch query for all cooled-down URLs avoids N+1 pattern
+    const cooledUrls = anchorHistory.recentTier2Urls(db, windowIso);
+    const survivors = pool.filter(({ published_url }) => !cooledUrls.has(published_url));
 
     if (survivors.length === 0) {
       logger.info('[CompoundGraph] skipped: all urls in cooldown');

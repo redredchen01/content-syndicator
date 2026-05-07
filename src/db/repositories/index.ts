@@ -360,6 +360,19 @@ export const anchorHistory = {
     `).get(targetUrl, windowIso) as { cnt: number };
     return row.cnt > 0;
   },
+
+  /**
+   * Returns the set of URLs that were used as tier-2 targets within the
+   * given time window. Used for batch cooldown filtering in selectTier2Target
+   * to avoid N+1 queries.
+   */
+  recentTier2Urls(db: Database.Database, windowIso: string): Set<string> {
+    const rows = db.prepare(`
+      SELECT DISTINCT target_url FROM anchor_history
+      WHERE is_tier2 = 1 AND used_at >= ?
+    `).all(windowIso) as Array<{ target_url: string }>;
+    return new Set(rows.map(r => r.target_url));
+  },
 };
 
 // ---------------------------------------------------------------------------

@@ -462,6 +462,26 @@ describe('anchorHistory', () => {
     expect(anchorHistory.usedAsTier2InWindow(db, url, '2099-01-01T00:00:00Z')).toBe(false);
   });
 
+  it('recentTier2Urls returns set of URLs used as tier-2 within window', () => {
+    const recent = 'https://dev.to/recent';
+    const old = 'https://dev.to/old';
+    anchorHistory.insert(db, {
+      batch_id: 'b1', variant_id: 'v1', platform: 'WordPress',
+      anchor_text: 'anchor', target_url: recent, is_tier2: true,
+    });
+    anchorHistory.insert(db, {
+      batch_id: 'b2', variant_id: 'v2', platform: 'WordPress',
+      anchor_text: 'anchor2', target_url: old, is_tier2: true,
+    });
+    const urls = anchorHistory.recentTier2Urls(db, '2020-01-01T00:00:00Z');
+    expect(urls.has(recent)).toBe(true);
+    expect(urls.has(old)).toBe(true);
+
+    // Future cutoff → empty set
+    const empty = anchorHistory.recentTier2Urls(db, '2099-01-01T00:00:00Z');
+    expect(empty.size).toBe(0);
+  });
+
   it('usedAsTier2InWindow returns false when is_tier2=0', () => {
     const url = 'https://example.com';
     anchorHistory.insert(db, {

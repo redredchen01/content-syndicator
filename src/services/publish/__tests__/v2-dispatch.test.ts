@@ -428,6 +428,30 @@ describe('selectTier2Target (via runV2Generate)', () => {
     expect(wpVariant.is_tier2).toBeFalsy();
   });
 
+  it('skips tier-2 when all URLs are in 7-day cooldown', async () => {
+    const db = freshDb();
+    // Insert 10 alive URLs but mark all as recently used as tier-2
+    for (let i = 0; i < 10; i++) {
+      insertAliveUrl(db, 'Dev.to', `https://dev.to/article-${i}`, i);
+      // Mark each as used as tier-2 very recently (within cooldown window)
+      db.prepare(`
+        INSERT INTO anchor_history (batch_id, variant_id, platform, anchor_text, target_url, is_tier2, used_at)
+        VALUES (?, ?, 'WordPress', 'anchor', ?, 1, datetime('now'))
+      `).run(`prev_b${i}`, `prev_v${i}`, `https://dev.to/article-${i}`);
+    }
+
+    getProfileMock.mockReturnValue(fakeBrand);
+    const wordpressVariant = makeVariant('WordPress');
+    generateVariantsMock.mockResolvedValue({ batchId: 'b1', variants: [wordpressVariant] });
+    attachAnchorsMock.mockResolvedValue([wordpressVariant]);
+    runLintMock.mockReturnValue({ ok: true, violations: [] });
+
+    await runV2Generate(db, { draft: 'test draft' });
+
+    expect(wordpressVariant.is_tier2).toBeFalsy();
+    expect(wordpressVariant.target_url).toBe('https://example.com');
+  });
+
   it('prefers highest-DA platform as tier-2 target', async () => {
     const db = freshDb();
     // Mix of Tier1 (Dev.to=1.0) and Tier2 (Blogger=0.6) platforms

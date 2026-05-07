@@ -182,6 +182,29 @@ describe('handlePublishJob', () => {
     db.close();
   });
 
+  it('defaults is_tier2 to 0 when variant.is_tier2 is undefined', async () => {
+    const db = makeDb();
+    // Variant with no is_tier2 field (as if pool was too small at generate time)
+    const variant = makeVariant({ anchor_words: ['testbrand'], is_tier2: undefined });
+    const job = makeJob(variant, { attempts: 0 });
+
+    mockAdapter.publish.mockResolvedValue({
+      platform: 'Dev.to',
+      success: true,
+      publishedUrl: 'https://dev.to/article/789',
+    });
+
+    await handlePublishJob(job, db);
+
+    const rows = db
+      .prepare('SELECT is_tier2 FROM anchor_history WHERE batch_id = ?')
+      .all('batch_123') as Array<{ is_tier2: number }>;
+
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].is_tier2).toBe(0);
+    db.close();
+  });
+
   it('writes is_tier2=0 for standard (non-tier-2) variant', async () => {
     const db = makeDb();
     const variant = makeVariant({ anchor_words: ['testbrand tool'] });
