@@ -2,19 +2,28 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger';
-import { PlatformAdapter } from '../adapters/base';
 import { allAdapters } from '../adapters/index';
 import { db } from '../db';
-import { getProfile, saveProfile, isReadyForDispatch, updatePreferredPlatforms, getPreferredPlatforms } from '../services/brand-profile';
-import { runPrecheck } from '../services/anchor-monitor';
 import { acquirePage, releasePage } from '../utils/browserManager';
 import { syncRoute } from './_helpers';
-import { computePlatformHealth, getDaTierConfig } from '../services/roi-scorer';
 import {
+  // credential-store (PR #19)
   updateApiKey,
   batchValidateApiKeys,
+  // platforms (Unit 1)
+  getAllPlatformStatuses,
+  getDefaultPublishingPlatforms as getDefaultPublishingPlatformsService,
+  resolveTargetPlatforms as resolveTargetPlatformsService,
+  // brand (Unit 1)
+  getBrandProfileWithDispatch,
+  saveBrandProfileFromInput,
+  runPrecheckForDispatch,
+  updatePreferredPlatformsForBrand,
+  getPreferredPlatformsForBrand,
+  // roi-config (Unit 1)
+  getPlatformHealth,
+  updateRoiConfig,
 } from '../services/admin';
-import { MVP_PLATFORMS } from '../constants';
 import {
   AUTH_DIR,
   getBrowserAuthMode,
@@ -28,164 +37,50 @@ import { isOAuthConfigured } from '../services/google-oauth';
 // status endpoint to see Twitter as OAuth-supported even when admin.ts is
 // loaded before any route file imports twitter-oauth.
 import '../services/twitter-oauth';
-import {
-  isOAuthSupported,
-  getStrategyByAdapter,
-  getOAuthProviderLabel,
-} from '../services/auth-strategy';
-import { oauthTokens } from '../db/oauth-tokens';
 
+// Re-exports for routes/publish.ts compat (Unit 7 will remove these — publish
+// will then import directly from services/admin/platforms.ts).
 export { getAdapterId, hasSavedBrowserSession };
+
+/** @deprecated import from '../services/admin/platforms' instead. Kept for publish.ts compat until Unit 7. */
+export function getDefaultPublishingPlatforms(): string[] {
+  return getDefaultPublishingPlatformsService(db);
+}
+
+/** @deprecated import from '../services/admin/platforms' instead. Kept for publish.ts compat until Unit 7. */
+export function resolveTargetPlatforms(platforms?: unknown): string[] {
+  return resolveTargetPlatformsService(db, platforms);
+}
 
 export const router = express.Router();
 
-// Data-driven connectivity check — add new platforms here only
-const API_CONNECTED: Record<string, () => boolean> = {
-  'Telegra.ph':  () => true,
-  'Dev.to':      () => Boolean(process.env.DEVTO_API_KEY),
-  'Medium':      () => Boolean(process.env.MEDIUM_INTEGRATION_TOKEN),
-  'Hashnode':    () => Boolean(process.env.HASHNODE_TOKEN && process.env.HASHNODE_PUBLICATION_ID),
-  'GitHub':      () => Boolean(process.env.GITHUB_TOKEN),
-  'Blogger':     () => Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && process.env.BLOGGER_BLOG_ID),
-  'WordPress':   () => Boolean(process.env.WORDPRESS_SITE_URL && process.env.WORDPRESS_USERNAME && process.env.WORDPRESS_APP_PASSWORD),
-  'Twitter':     () => Boolean(process.env.TWITTER_CONSUMER_KEY && process.env.TWITTER_CONSUMER_SECRET && process.env.TWITTER_ACCESS_TOKEN && process.env.TWITTER_ACCESS_TOKEN_SECRET),
-  'Instapaper':  () => Boolean(process.env.INSTAPAPER_USERNAME && process.env.INSTAPAPER_PASSWORD),
-};
-
-function hasStoredApiKey(platformId: string): boolean {
-  try {
-    const result = db.prepare('SELECT api_keys_encrypted FROM brand_profiles LIMIT 1').get() as
-      { api_keys_encrypted?: string } | undefined;
-    if (result?.api_keys_encrypted) {
-      const apiKeys = JSON.parse(result.api_keys_encrypted);
-      return Boolean(apiKeys[platformId]);
-    }
-  } catch (e) {
-    logger.warn(`Failed to check stored API key for ${platformId}`);
-  }
-  return false;
-}
-
-function isAdapterConnected(adapter: PlatformAdapter): boolean {
-  if (adapter.isBrowserAutomation) return isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter);
-  const adapterConnected = API_CONNECTED[adapter.name]?.() ?? false;
-  if (adapterConnected) return true;
-  if (hasStoredApiKey(getAdapterId(adapter))) return true;
-  // OAuth user-flow: a stored refresh_token in oauth_tokens counts as connected
-  if (isOAuthSupported(adapter.name) && oauthTokens.exists(db, getAdapterId(adapter))) {
-    return true;
-  }
-  // Hybrid (Medium): a saved browser session + browser automation enabled
-  if (adapter.supportsBrowserFallback && isBrowserAutomationEnabled() && hasSavedBrowserSession(adapter)) {
-    return true;
-  }
-  return false;
-}
-
-function isDefaultPublishTarget(adapter: PlatformAdapter) {
-  if (!isAdapterConnected(adapter)) return false;
-  if (adapter.isBrowserAutomation) return Boolean(adapter.canPublishAutomatically);
-  return true;
-}
-
-function getPlatformStatus(adapter: PlatformAdapter) {
-  const connected = isAdapterConnected(adapter);
-  const defaultEligible = isDefaultPublishTarget(adapter);
-
-  let reason = '';
-  if (!connected) {
-    reason = adapter.isBrowserAutomation
-      ? (isBrowserAutomationEnabled() ? 'No saved browser session' : 'Browser automation disabled to avoid controlling your desktop browser')
-      : 'Missing required API configuration';
-  } else if (!defaultEligible && adapter.isBrowserAutomation) {
-    reason = 'Login saved, but stable auto-publish selectors are not configured';
-  } else {
-    reason = 'Ready for default auto-publish';
-  }
-
-  // Get test status from database
-  let testStatus: any = { connected_at: null, last_test_error: null, test_timestamp: null };
-  try {
-    const result = db.prepare('SELECT platform_test_status FROM brand_profiles LIMIT 1').get() as
-      { platform_test_status?: string } | undefined;
-    if (result?.platform_test_status) {
-      const statusMap = JSON.parse(result.platform_test_status);
-      testStatus = statusMap[getAdapterId(adapter)] || testStatus;
-    }
-  } catch (e) {
-    logger.warn(`Failed to read platform test status: ${e}`);
-  }
-
-  return { connected, defaultEligible, reason, ...testStatus };
-}
-
-export function getDefaultPublishingPlatforms() {
-  return allAdapters.filter(isDefaultPublishTarget).map(a => a.name);
-}
-
-export function resolveTargetPlatforms(platforms?: unknown) {
-  if (Array.isArray(platforms) && platforms.length > 0) {
-    return platforms.filter((p): p is string => typeof p === 'string' && p.trim() !== '');
-  }
-  return getDefaultPublishingPlatforms();
-}
-
-router.get('/api/platforms', syncRoute((req, res) => {
-  const platforms = allAdapters.map(a => {
-    const id = getAdapterId(a);
-    const strategy = getStrategyByAdapter(a.name);
-    const supportsOAuth = strategy != null;
-    // Per-provider isConfigured — different providers have different env vars.
-    const oauthConfigured = strategy ? strategy.isConfigured() : false;
-    const oauthConnected = supportsOAuth && oauthTokens.exists(db, id);
-    return {
-      name: a.name,
-      id,
-      ...getPlatformStatus(a),
-      browserAutomation: Boolean(a.isBrowserAutomation),
-      browserAuthSupported: Boolean(a.isBrowserAutomation || a.supportsBrowserFallback),
-      canPublishAutomatically: Boolean(a.canPublishAutomatically || !a.isBrowserAutomation),
-      supportsOAuth,
-      oauthConfigured,
-      oauthConnected,
-      oauthProviderId: strategy?.providerId ?? null,
-      oauthProviderLabel: getOAuthProviderLabel(a.name),
-      supportsBrowserFallback: Boolean(a.supportsBrowserFallback),
-      browserSessionExists: hasSavedBrowserSession(a),
-      // PAT generation hint URL (Dev.to / Hashnode etc. — null when adapter
-      // doesn't expose one or the value is empty / falsy).
-      patGenerationUrl: a.patGenerationUrl ? a.patGenerationUrl : null,
-    };
-  });
-  res.json({ platforms, defaults: getDefaultPublishingPlatforms() });
+router.get('/api/platforms', syncRoute((_req, res) => {
+  res.json(getAllPlatformStatuses(db));
 }));
 
 router.get('/api/v2/brand-profile', syncRoute((_, res) => {
-  const profile = getProfile(db);
-  const dispatch = isReadyForDispatch(db);
-  res.json({ profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
+  res.json(getBrandProfileWithDispatch(db));
 }));
 
 router.put('/api/v2/brand-profile', syncRoute((req, res) => {
-  const body = req.body ?? {};
-  if (typeof body !== 'object' || body === null) return res.status(400).json({ error: 'JSON body required' });
-  if (typeof body.name !== 'string' || body.name.trim().length === 0) {
-    return res.status(422).json({ errors: [{ field: 'name', message: '品牌主名不能为空' }] });
+  const result = saveBrandProfileFromInput(db, req.body);
+  if (!result.ok) {
+    const status = result.status ?? 422;
+    // 400 historically returns { error: <message> }; 422 returns { errors: [...] }
+    if (status === 400) return res.status(400).json({ error: result.errors?.[0]?.message ?? 'Invalid body' });
+    return res.status(status).json({ errors: result.errors });
   }
-  const result = saveProfile(db, body);
-  if (!result.ok) return res.status(422).json({ errors: result.errors });
-  const dispatch = isReadyForDispatch(db);
-  res.json({ profile: result.profile, dispatchReady: dispatch.ready, dispatchReport: dispatch.report });
+  res.json({
+    profile: result.profile,
+    dispatchReady: result.dispatchReady,
+    dispatchReport: result.dispatchReport,
+  });
 }));
 
 router.post('/api/v2/precheck', syncRoute((req, res) => {
-  const profile = getProfile(db);
-  if (!profile) return res.status(412).json({ error: '品牌资料库未配置，请先访问 /admin.html 填写。' });
-  const { target_urls } = req.body ?? {};
-  const urls: string[] = Array.isArray(target_urls)
-    ? target_urls.filter((u: unknown) => typeof u === 'string')
-    : [];
-  res.json(runPrecheck(db, urls, profile));
+  const result = runPrecheckForDispatch(db, req.body);
+  if (!result.ok) return res.status(result.status ?? 500).json({ error: result.error });
+  res.json(result.result);
 }));
 
 router.post('/api/auth/browser', async (req, res) => {
@@ -356,125 +251,33 @@ router.patch('/api/platforms/:platformId/api-key', async (req, res) => {
   }
 });
 
-// GET /api/v2/platform-health — ROI health for all 7 MVP platforms
 router.get('/api/v2/platform-health', syncRoute((_req, res) => {
-  try {
-    const health = computePlatformHealth(db);
-    return res.json(health);
-  } catch (err) {
-    logger.error('[Admin] computePlatformHealth failed, returning insufficient fallback', {
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    const fallback = (MVP_PLATFORMS as readonly string[]).map((platform) => ({
-      platform,
-      daTierLabel: 'Tier3' as const,
-      daTierScore: 0.3,
-      t7dRate: null,
-      t30dRate: null,
-      roiScore: 0.3,
-      score: 0.3,
-      status: 'insufficient' as const,
-      dataInsufficient: true,
-      coldStart: true,
-    }));
-    return res.json(fallback);
-  }
+  res.json(getPlatformHealth(db));
 }));
 
-const VALID_TIER_SCORES = new Set([0.3, 0.6, 1.0]);
-
-// PATCH /api/v2/roi-config — update DA tier config and threshold
 router.patch('/api/v2/roi-config', syncRoute((req, res) => {
-  const { daTierConfig, threshold } = req.body ?? {};
-
-  // Validate threshold
-  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-    return res.status(400).json({ error: 'threshold must be a number between 0 and 1' });
-  }
-
-  // Validate daTierConfig values
-  if (daTierConfig !== undefined && typeof daTierConfig === 'object' && daTierConfig !== null) {
-    for (const [key, val] of Object.entries(daTierConfig as Record<string, unknown>)) {
-      // Validate platform key
-      if (!(MVP_PLATFORMS as readonly string[]).includes(key)) {
-        return res.status(400).json({ error: `Unknown platform: ${key}` });
-      }
-      // Validate tier score value (explicit typeof prevents type coercion attacks)
-      if (typeof val !== 'number' || !VALID_TIER_SCORES.has(val)) {
-        return res.status(400).json({ error: `Invalid tier score for ${key}: must be 0.3, 0.6, or 1.0` });
-      }
-    }
-  }
-
-  // Read existing row
-  const row = db.prepare(
-    `SELECT da_tier_config_json, roi_threshold FROM brand_profiles WHERE brand_id = 'main' LIMIT 1`
-  ).get() as { da_tier_config_json?: string; roi_threshold?: number | null } | undefined;
-
-  if (!row) {
-    return res.status(400).json({ error: 'Brand profile not configured' });
-  }
-
-  // Merge DA tier config
-  let existingTiers: Record<string, number> = {};
-  try {
-    existingTiers = row.da_tier_config_json ? JSON.parse(row.da_tier_config_json) : {};
-  } catch {
-    existingTiers = {};
-  }
-  const mergedTiers = { ...existingTiers, ...(daTierConfig ?? {}) };
-
-  db.prepare(
-    `UPDATE brand_profiles SET da_tier_config_json = ?, roi_threshold = ? WHERE brand_id = 'main'`
-  ).run(JSON.stringify(mergedTiers), threshold);
-
-  logger.info(`[Admin] Updated ROI config: threshold=${threshold}`);
-
-  return res.json({ daTierConfig: mergedTiers, threshold });
+  const result = updateRoiConfig(db, req.body);
+  if (!result.ok) return res.status(result.status ?? 400).json({ error: result.error });
+  res.json({ daTierConfig: result.daTierConfig, threshold: result.threshold });
 }));
 
-// PATCH /api/v2/brand-profile/preferred-platforms — update preferred publishing platforms
 router.patch('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
   try {
-    const { platforms } = req.body ?? {};
-
-    if (!Array.isArray(platforms)) {
-      return res.status(400).json({ error: 'platforms must be an array' });
-    }
-
-    const result = updatePreferredPlatforms(db, platforms);
-    if (!result.ok) {
-      return res.status(422).json({ error: result.error });
-    }
-
-    const preferred = getPreferredPlatforms(db);
-    logger.info(`[Admin] Updated preferred platforms: ${preferred.join(', ')}`);
-
-    res.json({
-      ok: true,
-      preferredPlatforms: preferred,
-    });
+    const result = updatePreferredPlatformsForBrand(db, req.body);
+    if (!result.ok) return res.status(result.status ?? 500).json({ error: result.error });
+    res.json({ ok: true, preferredPlatforms: result.preferredPlatforms });
   } catch (error: any) {
     logger.error('[Admin] Failed to update preferred platforms', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Failed to update preferred platforms',
-    });
+    res.status(500).json({ ok: false, error: error?.message ?? 'Failed to update preferred platforms' });
   }
 }));
 
-// GET /api/v2/brand-profile/preferred-platforms — get current preferred platforms
-router.get('/api/v2/brand-profile/preferred-platforms', syncRoute((req, res) => {
+router.get('/api/v2/brand-profile/preferred-platforms', syncRoute((_req, res) => {
   try {
-    const preferred = getPreferredPlatforms(db);
-    res.json({ preferredPlatforms: preferred });
+    res.json({ preferredPlatforms: getPreferredPlatformsForBrand(db) });
   } catch (error: any) {
     logger.error('[Admin] Failed to get preferred platforms', error);
-    res.status(500).json({
-      ok: false,
-      error: error?.message ?? 'Failed to get preferred platforms',
-    });
+    res.status(500).json({ ok: false, error: error?.message ?? 'Failed to get preferred platforms' });
   }
 }));
 
