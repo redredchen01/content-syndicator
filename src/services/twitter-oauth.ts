@@ -220,7 +220,14 @@ export interface TwitterAccessToken {
  * token (and any rotated refresh_token) back to oauth_tokens.
  *
  * Throws when no tokens stored or the refresh attempt fails.
+ *
+ * Race-condition guard: an in-flight Promise is cached per platform so that
+ * two concurrent publish tasks don't both call refreshTwitterToken().
+ * Twitter rotates the refresh_token on each use; a double-refresh would make
+ * the second writer persist a now-invalid token, breaking the account.
  */
+const _refreshInFlight = new Map<string, Promise<TwitterAccessToken>>();
+
 export async function getValidTwitterAccessToken(platform: string): Promise<TwitterAccessToken> {
   const stored = oauthTokens.get(db, platform);
   if (!stored) {
@@ -240,18 +247,29 @@ export async function getValidTwitterAccessToken(platform: string): Promise<Twit
     };
   }
 
-  // Refresh
-  const refreshed = await refreshTwitterToken(stored.refresh_token);
-  oauthTokens.save(db, platform, {
-    refresh_token: refreshed.refresh_token,
-    access_token: refreshed.access_token ?? null,
-    expires_at: refreshed.expires_at ?? null,
-  });
+  // Coalesce concurrent refresh calls to one in-flight request per platform.
+  const existing = _refreshInFlight.get(platform);
+  if (existing) return existing;
 
-  return {
-    accessToken: refreshed.access_token!,
-    expiresAt: refreshed.expires_at ?? null,
-  };
+  const refreshPromise = (async (): Promise<TwitterAccessToken> => {
+    try {
+      const refreshed = await refreshTwitterToken(stored.refresh_token);
+      oauthTokens.save(db, platform, {
+        refresh_token: refreshed.refresh_token,
+        access_token: refreshed.access_token ?? null,
+        expires_at: refreshed.expires_at ?? null,
+      });
+      return {
+        accessToken: refreshed.access_token!,
+        expiresAt: refreshed.expires_at ?? null,
+      };
+    } finally {
+      _refreshInFlight.delete(platform);
+    }
+  })();
+
+  _refreshInFlight.set(platform, refreshPromise);
+  return refreshPromise;
 }
 
 // ── AuthStrategy export & registration ─────────────────────────────────────

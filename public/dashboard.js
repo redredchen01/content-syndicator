@@ -33,6 +33,16 @@ class MetricsClient {
 
 const metricsClient = new MetricsClient();
 
+/** Escape a value before inserting it into innerHTML. */
+function escHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // State
 let charts = {};
 let lastRefreshTime = null;
@@ -264,14 +274,14 @@ async function updateAnomalies(metricsData) {
     anomaliesList.innerHTML = anomalies.slice(0, 5).map(a => `
       <div class="anomaly-item ${a.metric === 'error_rate' ? 'high' : ''}">
         <div class="anomaly-text">
-          <div class="anomaly-op">${a.operation}</div>
+          <div class="anomaly-op">${escHtml(a.operation)}</div>
           <div class="anomaly-detail">
             ${a.metric === 'latency'
-              ? `延迟: ${a.currentValue}ms (基线: ${a.baseline}ms, ${a.deviation}%)`
-              : `错误率: ${a.currentValue}%`}
+              ? `延迟: ${escHtml(a.currentValue)}ms (基线: ${escHtml(a.baseline)}ms, ${escHtml(a.deviation)}%)`
+              : `错误率: ${escHtml(a.currentValue)}%`}
           </div>
         </div>
-        <button class="anomaly-btn" onclick="analyzeOperation('${a.operation}')">分析</button>
+        <button class="anomaly-btn" onclick="analyzeOperation('${escHtml(a.operation)}')">分析</button>
       </div>
     `).join('');
   } else {
@@ -293,23 +303,23 @@ async function analyzeOperation(operation = null) {
     const res = await metricsClient.analyze(op);
 
     if (!res.ok) {
-      resultDiv.innerHTML = `<div class="error">分析失败: ${res.error}</div>`;
+      resultDiv.innerHTML = `<div class="error">分析失败: ${escHtml(res.error)}</div>`;
       return;
     }
 
     const analysis = res.data;
     resultDiv.innerHTML = `
       <div class="diagnosis-result">
-        <div class="diagnosis-primary">诊断: ${analysis.diagnosis.primary}</div>
+        <div class="diagnosis-primary">诊断: ${escHtml(analysis.diagnosis.primary)}</div>
 
         ${analysis.diagnosis.factors.length > 0 ? `
           <div class="factors">
             <strong>问题因素:</strong>
             ${analysis.diagnosis.factors.map(f => `
               <div class="factor-item">
-                <span class="factor-type">${f.type}</span>
-                ${f.metric}: ${f.currentValue.toFixed(2)}
-                (基线: ${f.baseline.toFixed(2)}, 严重度: ${f.severity})
+                <span class="factor-type">${escHtml(f.type)}</span>
+                ${escHtml(f.metric)}: ${f.currentValue.toFixed(2)}
+                (基线: ${f.baseline.toFixed(2)}, 严重度: ${escHtml(f.severity)})
               </div>
             `).join('')}
           </div>
@@ -320,9 +330,9 @@ async function analyzeOperation(operation = null) {
             <strong>优化建议:</strong>
             ${analysis.recommendations.map(r => `
               <div class="rec-item">
-                <strong>[P${r.priority}] ${r.title}</strong><br>
-                ${r.description}<br>
-                <small>预期改进: ${r.estimatedImprovement}</small>
+                <strong>[P${escHtml(r.priority)}] ${escHtml(r.title)}</strong><br>
+                ${escHtml(r.description)}<br>
+                <small>预期改进: ${escHtml(r.estimatedImprovement)}</small>
               </div>
             `).join('')}
           </div>
@@ -335,7 +345,7 @@ async function analyzeOperation(operation = null) {
       </div>
     `;
   } catch (error) {
-    resultDiv.innerHTML = `<div class="error">分析失败: ${error.message}</div>`;
+    resultDiv.innerHTML = `<div class="error">分析失败: ${escHtml(error.message)}</div>`;
   }
 }
 
@@ -344,35 +354,9 @@ function startAutoRefresh() {
     refreshData();
   }, 2000); // Refresh every 2 seconds
 }
-
-function refreshData() {
-  // This function is called from onclick and interval
-  const timeRange = document.getElementById('timeRange').value;
-  performRefresh(timeRange);
-}
-
-async function performRefresh(timeRange) {
-  try {
-    const [statsRes, metricsRes] = await Promise.all([
-      metricsClient.getStats(),
-      metricsClient.getMetrics('*', timeRange)
-    ]);
-
-    if (!statsRes.ok || !metricsRes.ok) {
-      showError('Failed to fetch data');
-      return;
-    }
-
-    updateMetricCards(statsRes.data, metricsRes.data);
-    updateCharts(metricsRes.data);
-    await updateAnomalies(metricsRes.data);
-
-    lastRefreshTime = new Date().toLocaleTimeString();
-    document.getElementById('refreshIndicator').textContent = `最后更新: ${lastRefreshTime}`;
-  } catch (error) {
-    console.error('Refresh error:', error);
-  }
-}
+// NOTE: refreshData() is declared as the async version at the top of this file.
+// Do NOT re-declare it here — the async version handles updateMetricCards,
+// updateCharts, updateAnomalies, and proper error display.
 
 function showError(message) {
   console.error(message);
