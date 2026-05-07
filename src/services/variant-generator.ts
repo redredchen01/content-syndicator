@@ -23,6 +23,7 @@ import { runParallel } from '../utils/parallel';
 import { llmCalls, draftBatches } from '../db/repositories';
 import { generateDraftHash, getOrNull as getCachedVariant, set as setCachedVariant } from './variant-cache';
 import { logger } from '../utils/logger';
+import { checkBudgetStatus } from '../utils/budget-gate';
 
 // -----------------------------------------------------------------------
 // Input / error types
@@ -93,6 +94,17 @@ export async function generateVariants(
       `Draft too short: ${charCount} non-whitespace chars (min ${MIN_DRAFT_CHARS})`,
     );
     Object.assign(err, { code: DRAFT_TOO_SHORT, minLength: MIN_DRAFT_CHARS });
+    throw err;
+  }
+
+  // Unit 2: Budget check gate — verify LLM budget before starting generation
+  const budgetStatus = checkBudgetStatus(db);
+  if (budgetStatus.status === 'critical') {
+    logger.warn(
+      `[Budget] Critical threshold exceeded: $${budgetStatus.spent.toFixed(2)} > $${(budgetStatus.limit * 2).toFixed(2)}. Rejecting request.`,
+    );
+    const err = new Error('LLM daily budget exceeded (critical)');
+    Object.assign(err, { status: 429, code: 'BUDGET_EXCEEDED_CRITICAL' });
     throw err;
   }
 
@@ -244,6 +256,14 @@ async function generateOne(
     output_tokens: outputTokens,
     cost_usd: cost,
   });
+
+  // Unit 5: Post-record budget threshold check — warn if critical threshold crossed
+  const postStatus = checkBudgetStatus(db);
+  if (postStatus.status === 'critical') {
+    logger.warn(
+      `[Budget] CRITICAL after record: $${postStatus.spent.toFixed(2)} > $${(postStatus.limit * 2).toFixed(2)}. Next request will be blocked.`,
+    );
+  }
 
   const variant = {
     variant_id: `${batchId}_${task.platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`,

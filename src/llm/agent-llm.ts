@@ -4,6 +4,7 @@ import { RETRY_CONFIG } from '../constants';
 import { logger } from '../utils/logger';
 import type { LLMMessage, LLMResponse, LLMWithToolsOptions, ToolCall } from '../types';
 import { getOpenAIClient, getGeminiClient, safetySettings } from './client';
+import { tryDowngradeAndRetry } from '../services/model-downgrade-strategy';
 
 // Re-export so existing callers (agent/core.ts) don't need to change imports
 export type { LLMMessage, LLMResponse, LLMWithToolsOptions };
@@ -12,21 +13,56 @@ export async function invokeLLMWithTools(options: LLMWithToolsOptions): Promise<
   const selectedModel = options.model || process.env.SELECTED_MODEL || '';
 
   // Try OpenAI first if model is GPT or if it's the selected provider
-  if (selectedModel.includes('gpt') || selectedModel.includes('o1') || selectedModel.includes('o3') || 
+  if (selectedModel.includes('gpt') || selectedModel.includes('o1') || selectedModel.includes('o3') ||
       (process.env.OPENAI_API_KEY && !selectedModel.includes('gemini'))) {
-    return await invokeOpenAIWithTools(options);
+    try {
+      return await invokeOpenAIWithTools(options);
+    } catch (error: any) {
+      // Unit 4: Attempt model downgrade if not quota-exhausted
+      if (!error?.__skipRetry) {
+        try {
+          return await tryDowngradeAndRetry(
+            options,
+            error,
+            (opts) => invokeOpenAIWithTools(opts),
+          );
+        } catch (downgradeError) {
+          throw downgradeError; // Downgrade failed, propagate
+        }
+      }
+      throw error; // Quota exhausted, don't attempt downgrade
+    }
   }
 
   // Try Gemini if model is Gemini or if it's the selected provider
-  if (selectedModel.includes('gemini') || 
+  if (selectedModel.includes('gemini') ||
       (process.env.GEMINI_API_KEY && !selectedModel.includes('gpt'))) {
     try {
       return await invokeGeminiWithTools(options);
     } catch (error: any) {
       logger.warn(`[LLM] Gemini failed: ${error.message}`);
-      // Fallback to OpenAI
+
+      // Unit 4: Attempt model downgrade before provider fallback, unless quota-exhausted
+      if (!error?.__skipRetry) {
+        try {
+          return await tryDowngradeAndRetry(
+            options,
+            error,
+            (opts) => invokeOpenAIWithTools(opts), // Downgrade to OpenAI
+          );
+        } catch (downgradeError) {
+          // Downgrade failed, try provider fallback
+          if (process.env.OPENAI_API_KEY) {
+            logger.info('[LLM] Downgrade failed, falling back to OpenAI...');
+            return await invokeOpenAIWithTools(options);
+          }
+          throw downgradeError;
+        }
+      }
+
+      // Quota exhausted, skip downgrade and go straight to fallback
       if (process.env.OPENAI_API_KEY) {
-        logger.info('[LLM] Falling back to OpenAI...');
+        logger.info('[LLM] Quota exhausted, falling back to OpenAI...');
         return await invokeOpenAIWithTools(options);
       }
       throw error;
