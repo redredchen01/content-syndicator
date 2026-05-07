@@ -1,8 +1,9 @@
 ---
 title: feat: LLM Budget Gate + Auto Model Downgrade
 type: feat
-status: active
+status: completed
 date: 2026-05-07
+completed: 2026-05-07T17:58:00Z
 ---
 
 # LLM Budget Gate + Auto Model Downgrade
@@ -129,7 +130,7 @@ generateVariants(input, db)
 
 ## Implementation Units
 
-- [ ] **Unit 1: 预算网关和状态检查**
+- [x] **Unit 1: 预算网关和状态检查**
 
 **Goal:** 在 `generateVariants()` 前实现预检查函数，返回预算状态和指标。
 
@@ -169,7 +170,7 @@ generateVariants(input, db)
 
 ---
 
-- [ ] **Unit 2: generateVariants 中集成预检查网关**
+- [x] **Unit 2: generateVariants 中集成预检查网关**
 
 **Goal:** 在生成前插入预检查，根据预算状态决定是否继续。
 
@@ -207,7 +208,7 @@ generateVariants(input, db)
 
 ---
 
-- [ ] **Unit 3: 模型降级策略和重试**
+- [x] **Unit 3: 模型降级策略和重试**
 
 **Goal:** 实现模型降级级联和自动重试逻辑。
 
@@ -247,7 +248,7 @@ generateVariants(input, db)
 
 ---
 
-- [ ] **Unit 4: invokeLLMWithTools 中集成模型降级重试**
+- [x] **Unit 4: invokeLLMWithTools 中集成模型降级重试**
 
 **Goal:** 在 LLM 调用失败时自动触发模型降级重试。
 
@@ -287,7 +288,7 @@ generateVariants(input, db)
 
 ---
 
-- [ ] **Unit 5: 记录后预算阈值检查**
+- [x] **Unit 5: 记录后预算阈值检查**
 
 **Goal:** 在成本记录后检查是否触发硬停止条件，为后续请求做准备。
 
