@@ -6,6 +6,9 @@
  * direction is one-way: publish → admin/platforms; admin never imports publish.
  */
 
+// Shared infrastructure (re-exported so routes/publish.ts stays free of direct db/* imports per Plan R2).
+export { db } from '../../db';
+
 // v2-dispatch (Unit 5)
 export {
   runV2Generate,

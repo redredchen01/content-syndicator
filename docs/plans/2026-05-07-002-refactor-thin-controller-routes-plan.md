@@ -1,7 +1,7 @@
 ---
 title: "refactor: admin.ts / publish.ts 薄 controller + per-domain service"
 type: refactor
-status: active
+status: completed
 date: 2026-05-07
 origin: docs/brainstorms/2026-05-07-route-refactor-thin-controller-requirements.md
 ---
@@ -367,7 +367,7 @@ src/
 
 ---
 
-- [ ] **Unit 5: Scaffold `services/publish/` + extract v2-dispatch / batch-status**
+- [x] **Unit 5: Scaffold `services/publish/` + extract v2-dispatch / batch-status**
 
 **Goal:** 建立 publish 子目錄；先抽出兩個低風險 v2 service（current handler 已是薄形態，主要是搬移）。
 
@@ -452,7 +452,7 @@ src/
 
 ---
 
-- [ ] **Unit 7: Slim `routes/publish.ts` to < 80 行 + 完成 publish PR**
+- [x] **Unit 7: Slim `routes/publish.ts` to < 80 行 + 完成 publish PR**
 
 **Goal:** publish.ts 改為純薄 controller，總行數 < 80，每個 endpoint 3-5 行。
 

@@ -1,9 +1,9 @@
 import express from 'express';
 import path from 'path';
 import multer from 'multer';
-import { db } from '../db';
 import { asyncRoute, syncRoute } from './_helpers';
 import {
+  db,
   runGenerate, runGenerateManual, runGeneratePromo,
   getBatchStatus, getQueueSnapshot,
   startSinglePublish, startAutoPublish, startBulkPublishFromFile,
