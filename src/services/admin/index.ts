@@ -1,11 +1,10 @@
 /**
  * services/admin/* barrel — public re-exports for admin domain services.
- *
- * Plan 2026-05-07-002 progress:
- *   - Unit 1 (this PR): platforms / brand / roi-config
- *   - Unit 3 (PR #19):  credential-store
- *   - Unit 2 / 4 / 5+:  pending (browser-auth, slim controller, publish/*)
  */
+
+// Shared infrastructure (re-exported so controllers stay free of direct db/* imports per Plan R2).
+export { db } from '../../db';
+export { isBrowserAutomationEnabled } from '../browser-session';
 
 // credential-store (PR #19)
 export {
