@@ -1,9 +1,10 @@
 ---
 title: "feat: Tier1-3 平台 OAuth / PAT-引导 统一接入 (WordPress.com + GitHub OAuth + Dev.to/Hashnode 引导)"
 type: feat
-status: active
+status: completed
 date: 2026-05-07
 origin: docs/plans/2026-05-06-004-feat-twitter-oauth2-pkce-plan.md
+pr: https://github.com/redredchen01/content-syndicator/pull/18
 ---
 
 # Tier 1-3 平台一键认证：WordPress.com / GitHub OAuth + Dev.to / Hashnode PAT 引导
