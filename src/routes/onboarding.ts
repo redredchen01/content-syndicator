@@ -24,7 +24,7 @@ export function isInitialized(): boolean {
         const apiKeys = JSON.parse(result.api_keys_encrypted);
         return Boolean(apiKeys[getAdapterId(adapter)]);
       }
-    } catch (e) {}
+    } catch (e) { console.warn('[onboarding] Failed to parse api_keys_encrypted:', e); }
 
     // Check env vars as fallback
     const isConnected = Boolean(

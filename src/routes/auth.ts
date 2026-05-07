@@ -210,13 +210,19 @@ function handleOAuthCallback(expectedProviderId: string) {
     pruneExpiredStates();
     const pending = pendingStates.get(state);
     if (!pending) return oauthErrorRedirect(res, 'invalid_state');
-    pendingStates.delete(state); // one-shot
 
+    // Validate all conditions BEFORE consuming the one-shot token.
+    // Original order deleted first then checked expiry — a refactor could
+    // accidentally re-use a deleted state. Correct order: check, then delete.
+    if (pending.expiresAt < Date.now()) {
+      pendingStates.delete(state);
+      return oauthErrorRedirect(res, 'state_expired');
+    }
     if (pending.providerId !== expectedProviderId) {
-      // Cross-provider state mismatch (shouldn't happen — defense in depth).
+      pendingStates.delete(state);
       return oauthErrorRedirect(res, 'invalid_state');
     }
-    if (pending.expiresAt < Date.now()) return oauthErrorRedirect(res, 'state_expired');
+    pendingStates.delete(state); // one-shot — consumed after all guards pass
 
     const strategy = getStrategyByProvider(pending.providerId);
     if (!strategy) return oauthErrorRedirect(res, 'unknown_provider');
